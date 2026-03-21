@@ -140,8 +140,7 @@ class TestSparkOllama:
             "Install Ollama: curl -fsSL https://ollama.com/install.sh | sh"
         )
         assert result.stdout.strip() != "", (
-            "ollama --version produced empty output despite exit code 0. "
-            f"stderr: {result.stderr!r}"
+            f"ollama --version produced empty output despite exit code 0. stderr: {result.stderr!r}"
         )
 
     @pytest.mark.parametrize(
@@ -214,12 +213,10 @@ class TestSparkDisk:
         # df -i: inode stats; awk extracts the "Use%" column for the root mount
         result: CommandResult = run_remote(
             spark_ssh,
-            "df -i / | awk 'NR==2 {gsub(\"%\",\"\",$5); print $5}'",
+            'df -i / | awk \'NR==2 {gsub("%","",$5); print $5}\'',
             timeout=15,
         )
-        assert result.return_code == 0, (
-            f"Failed to query inode stats on Spark: {result.stderr!r}"
-        )
+        assert result.return_code == 0, f"Failed to query inode stats on Spark: {result.stderr!r}"
         raw_pct = result.stdout.strip()
         assert raw_pct.isdigit(), (
             f"Unexpected inode usage output: {raw_pct!r}. "
@@ -277,8 +274,7 @@ class TestSparkNode:
             "to confirm Node is installed, then reinstall via nvm."
         )
         assert result.stdout.strip() != "", (
-            "npm --version produced empty output. "
-            f"stderr: {result.stderr!r}"
+            f"npm --version produced empty output. stderr: {result.stderr!r}"
         )
 
 
@@ -311,9 +307,7 @@ class TestSparkKernel:
             "test -d /sys/kernel/security/landlock && echo PRESENT || echo ABSENT",
             timeout=10,
         )
-        assert result.return_code == 0, (
-            f"Landlock check command failed: {result.stderr!r}"
-        )
+        assert result.return_code == 0, f"Landlock check command failed: {result.stderr!r}"
         assert "PRESENT" in result.stdout, (
             "Landlock LSM is not available on this kernel. "
             "The DGX Spark should ship with a kernel >= 5.13 that includes Landlock. "
@@ -339,9 +333,7 @@ class TestSparkKernel:
             ),
             timeout=20,
         )
-        assert result.return_code == 0, (
-            f"seccomp kernel config check failed: {result.stderr!r}"
-        )
+        assert result.return_code == 0, f"seccomp kernel config check failed: {result.stderr!r}"
         assert "SUPPORTED" in result.stdout, (
             "CONFIG_SECCOMP=y not found in the kernel configuration. "
             "seccomp filtering will not be applied to sandboxes. "
@@ -363,9 +355,7 @@ class TestSparkKernel:
             "test -f /sys/fs/cgroup/cgroup.controllers && echo V2 || echo V1",
             timeout=10,
         )
-        assert result.return_code == 0, (
-            f"cgroup version check failed: {result.stderr!r}"
-        )
+        assert result.return_code == 0, f"cgroup version check failed: {result.stderr!r}"
         assert "V2" in result.stdout, (
             "cgroup v2 (unified hierarchy) is not active on Spark. "
             "The presence of /sys/fs/cgroup/cgroup.controllers indicates v2. "
@@ -428,9 +418,7 @@ class TestSparkNegative:
             "qwen3-coder-next:q4_K_M",
         ],
     )
-    def test_ollama_partial_download_detected(
-        self, spark_ssh: Connection, model: str
-    ) -> None:
+    def test_ollama_partial_download_detected(self, spark_ssh: Connection, model: str) -> None:
         """Model is actually loadable by Ollama, not just listed in the index.
 
         ``ollama list`` reads only the model index file; it will show a model

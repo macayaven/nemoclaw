@@ -38,7 +38,6 @@ from fabric import Connection
 from ..helpers import parse_json_output, run_remote
 from ..models import CommandResult, OpenShellProvider
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -159,9 +158,7 @@ class TestMacProviderNegative:
     an available provider.
     """
 
-    def test_mac_unreachable_provider_fails_gracefully(
-        self, spark_ssh: Connection
-    ) -> None:
+    def test_mac_unreachable_provider_fails_gracefully(self, spark_ssh: Connection) -> None:
         """An unreachable mac provider must return an error, not hang.
 
         Registers a temporary provider pointing at a non-routable IP
@@ -225,18 +222,24 @@ class TestMacProviderNegative:
             result: CommandResult = run_remote(spark_ssh, run_cmd, timeout=30)
             combined = (result.stdout + result.stderr).lower()
             error_keywords = {
-                "error", "timeout", "refused", "unreachable",
-                "failed", "could not", "connection", "curl_failed",
+                "error",
+                "timeout",
+                "refused",
+                "unreachable",
+                "failed",
+                "could not",
+                "connection",
+                "curl_failed",
             }
             got_error = any(kw in combined for kw in error_keywords) or result.return_code != 0
-        except TimeoutError:
-            # The command itself hung — this is also a failure mode but
+        except TimeoutError as exc:
+            # The command itself hung -- this is also a failure mode but
             # distinct: re-raise so pytest surfaces it as a timeout failure.
             raise AssertionError(
                 f"Provider '{temp_provider_name}' pointed at unreachable host "
                 f"{unreachable_ip} caused run_remote to hang for >30 seconds. "
                 "OpenShell must enforce a connect timeout to fail fast."
-            )
+            ) from exc
         finally:
             # Always clean up: delete temp sandbox and provider
             run_remote(

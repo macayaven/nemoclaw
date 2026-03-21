@@ -14,13 +14,12 @@ behavioral : Layer-B endpoint / network tests (hit real sockets).
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 from fabric import Connection
 
+from ..helpers import assert_json_schema, run_remote
 from ..models import CommandResult, OllamaTagsResponse
-from ..helpers import run_remote, assert_http_healthy, assert_json_schema, parse_json_output
-
 
 # ---------------------------------------------------------------------------
 # Contract tests — Ollama binding and environment configuration
@@ -42,9 +41,7 @@ class TestOllamaBinding:
         result: CommandResult = run_remote(spark_ssh, "ss -tlnp | grep 11434")
 
         listening_line = result.stdout
-        assert (
-            "0.0.0.0:11434" in listening_line or "*:11434" in listening_line
-        ), (
+        assert "0.0.0.0:11434" in listening_line or "*:11434" in listening_line, (
             f"Ollama is not bound to all interfaces.  "
             f"Expected '0.0.0.0:11434' or '*:11434' in ss output, got:\n{listening_line}"
         )
@@ -109,8 +106,7 @@ class TestOllamaHealth:
         payload = response.json()
         parsed = OllamaTagsResponse.model_validate(payload)
         assert isinstance(parsed.models, list), (
-            "OllamaTagsResponse.models must be a list; "
-            f"got {type(parsed.models)}"
+            f"OllamaTagsResponse.models must be a list; got {type(parsed.models)}"
         )
 
     def test_reachable_from_other_host(self, spark_ip: str) -> None:

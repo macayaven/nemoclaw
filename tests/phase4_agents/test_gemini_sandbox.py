@@ -26,7 +26,6 @@ from fabric import Connection
 
 from ..helpers import run_remote
 from ..models import CommandResult
-from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants

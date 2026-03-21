@@ -29,8 +29,8 @@ behavioral : Hit real network sockets.
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 from ..settings import TestSettings
 
@@ -125,8 +125,7 @@ class TestDegradedMode:
         nemotron_model = _first_nemotron_model(litellm_url)
         if nemotron_model is None:
             pytest.skip(
-                "No nemotron model found in LiteLLM catalogue — "
-                "skipping Spark-path degraded test."
+                "No nemotron model found in LiteLLM catalogue — skipping Spark-path degraded test."
             )
 
         try:
@@ -136,9 +135,7 @@ class TestDegradedMode:
                 timeout=120,
             )
         except httpx.ConnectError as exc:
-            pytest.fail(
-                f"LiteLLM proxy is unreachable during degraded-mode test: {exc}"
-            )
+            pytest.fail(f"LiteLLM proxy is unreachable during degraded-mode test: {exc}")
         except httpx.TimeoutException:
             pytest.fail(
                 f"nemotron request timed out after 120 s in degraded-mode test.\n"
@@ -205,9 +202,7 @@ class TestDegradedMode:
             f"Body: {response.text[:400]!r}"
         )
 
-    def test_error_response_is_structured(
-        self, litellm_url: str, mac_down: bool
-    ) -> None:
+    def test_error_response_is_structured(self, litellm_url: str, mac_down: bool) -> None:
         """Error responses from the proxy must be JSON, not raw tracebacks or HTML.
 
         Submits a request that is guaranteed to produce an error (either because
@@ -218,12 +213,9 @@ class TestDegradedMode:
         This test always runs regardless of Mac availability because we can
         always produce an error by requesting a non-existent model.
         """
-        if mac_down:
-            # Use the real qwen3 model so the error comes from a backend failure.
-            error_model = _QWEN_FULL_MODEL
-        else:
-            # Use a model that cannot possibly be routed to force an error.
-            error_model = "nonexistent/degraded-test-model:latest"
+        # Use the real qwen3 model when Mac is down (backend failure), otherwise
+        # use a model that cannot possibly be routed to force an error.
+        error_model = _QWEN_FULL_MODEL if mac_down else "nonexistent/degraded-test-model:latest"
 
         try:
             response = httpx.post(
@@ -240,8 +232,7 @@ class TestDegradedMode:
             pytest.fail(f"LiteLLM proxy is unreachable: {exc}")
 
         assert response.status_code >= 400, (
-            f"Expected an error status for model={error_model!r}, "
-            f"got {response.status_code}."
+            f"Expected an error status for model={error_model!r}, got {response.status_code}."
         )
 
         # The response body must be parseable JSON.
@@ -268,5 +259,5 @@ class TestDegradedMode:
             f"LiteLLM error JSON does not contain a 'message' or 'detail' field.\n"
             f"Status: {response.status_code}\n"
             f"Body: {body!r}\n"
-            "Expected structure: {{\"error\": {{\"message\": \"...\"}}}}"
+            'Expected structure: {{"error": {{"message": "..."}}}}'
         )

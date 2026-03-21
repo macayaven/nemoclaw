@@ -33,14 +33,14 @@ import pytest
 from fabric import Connection
 from packaging.version import Version
 
-from ..helpers import parse_version, run_remote
+from ..helpers import run_remote
 from ..models import CommandResult, PiPrereqs
 
 # ---------------------------------------------------------------------------
 # Minimum resource thresholds
 # ---------------------------------------------------------------------------
 
-_MIN_FREE_RAM_MB = 2000           # 2 GB free (available + buffers/cache)
+_MIN_FREE_RAM_MB = 2000  # 2 GB free (available + buffers/cache)
 _MIN_PYTHON_VERSION = Version("3.10")
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ _MIN_PYTHON_VERSION = Version("3.10")
 class TestPiResources:
     """The Pi must have sufficient RAM and a compatible Python runtime.
 
-    LiteLLM and the monitoring stack together consume 800–1200 MB under load.
+    LiteLLM and the monitoring stack together consume 800-1200 MB under load.
     The 2 GB threshold gives a comfortable margin that prevents OOM kills
     when all services are running simultaneously.
     """
@@ -89,9 +89,7 @@ class TestPiResources:
         ``python3`` symlink exists.  A broken Python install (e.g. missing
         shared libraries) would pass a ``which python3`` check but fail here.
         """
-        result: CommandResult = run_remote(
-            pi_ssh, "python3 --version", timeout=15
-        )
+        result: CommandResult = run_remote(pi_ssh, "python3 --version", timeout=15)
         assert result.return_code == 0, (
             "python3 --version failed on the Raspberry Pi "
             f"(exit code {result.return_code}). "

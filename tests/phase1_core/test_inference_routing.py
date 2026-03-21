@@ -18,15 +18,13 @@ slow       : Tests that involve cold model loading (>30 s).
 
 from __future__ import annotations
 
-import json
 import uuid
 
 import pytest
 from fabric import Connection
 
-from ..models import CommandResult, OpenShellInferenceRoute, InferenceResponse
-from ..helpers import run_remote, parse_json_output
-
+from ..helpers import parse_json_output, run_remote
+from ..models import CommandResult, InferenceResponse, OpenShellInferenceRoute
 
 # ---------------------------------------------------------------------------
 # Contract tests — inference route state
@@ -111,11 +109,7 @@ class TestInferenceLocal:
         # Run the curl inside a temporary, non-persistent sandbox so we don't
         # accumulate leftover sandboxes across test runs.
         sandbox_name = f"test-infer-{uuid.uuid4().hex[:8]}"
-        run_cmd = (
-            f"openshell sandbox run "
-            f"--name {sandbox_name} "
-            f"-- {curl_cmd}"
-        )
+        run_cmd = f"openshell sandbox run --name {sandbox_name} -- {curl_cmd}"
 
         result: CommandResult = run_remote(spark_ssh, run_cmd)
 
@@ -167,11 +161,7 @@ class TestInferenceLocal:
             "}'"
         )
 
-        run_cmd = (
-            f"openshell sandbox run "
-            f"--name {sandbox_name} "
-            f"-- {curl_status_cmd}"
-        )
+        run_cmd = f"openshell sandbox run --name {sandbox_name} -- {curl_status_cmd}"
 
         result: CommandResult = run_remote(spark_ssh, run_cmd)
 
@@ -230,11 +220,7 @@ class TestInferenceNegative:
             "}'"
         )
 
-        run_cmd = (
-            f"openshell sandbox run "
-            f"--name {sandbox_name} "
-            f"-- {curl_cmd}"
-        )
+        run_cmd = f"openshell sandbox run --name {sandbox_name} -- {curl_cmd}"
 
         result: CommandResult = run_remote(spark_ssh, run_cmd)
 

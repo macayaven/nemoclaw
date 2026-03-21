@@ -99,9 +99,7 @@ class TestSecretHygiene:
     environment (since we cannot check for a value we do not know).
     """
 
-    def test_api_keys_not_in_logs(
-        self, spark_ssh: Connection, test_settings: TestSettings
-    ) -> None:
+    def test_api_keys_not_in_logs(self, spark_ssh: Connection, test_settings: TestSettings) -> None:
         """Raw API key values do not appear in any recent OpenShell log entry.
 
         Scans the last ``_LOG_TAIL_LINES`` lines of each OpenShell log file
@@ -122,8 +120,7 @@ class TestSecretHygiene:
 
         if not keys_to_check:
             pytest.skip(
-                "No API keys are configured in the test environment; "
-                "nothing to check for in logs."
+                "No API keys are configured in the test environment; nothing to check for in logs."
             )
 
         leaks: list[str] = []
@@ -144,7 +141,7 @@ class TestSecretHygiene:
                 if raw_key in log_content:
                     # Find a redacted excerpt for the assertion message.
                     idx = log_content.index(raw_key)
-                    snippet = log_content[max(0, idx - 40): idx + len(raw_key) + 40]
+                    snippet = log_content[max(0, idx - 40) : idx + len(raw_key) + 40]
                     redacted_key = raw_key[:4] + "..." + raw_key[-4:]
                     leaks.append(
                         f"  [{provider}] key ({redacted_key}) found in {log_path!r}. "

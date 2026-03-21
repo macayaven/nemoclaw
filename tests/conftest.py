@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import pytest
 from fabric import Connection
-from invoke import UnexpectedExit
 
 from .helpers import run_remote
 from .models import CommandResult, MacPrereqs, PiPrereqs, SparkPrereqs
 from .settings import TestSettings
-
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -242,6 +240,7 @@ def spark_prereqs(spark_ssh: Connection) -> SparkPrereqs:
     raw_docker = _stdout(docker_ver_result)
     # Extract version token: "28.0.4"
     import re as _re
+
     docker_version_match = _re.search(r"(\d+\.\d+[\.\d]*)", raw_docker)
     docker_version = docker_version_match.group(1) if docker_version_match else ""
 
@@ -294,15 +293,14 @@ def spark_prereqs(spark_ssh: Connection) -> SparkPrereqs:
     seccomp_supported = _stdout(seccomp_result) not in ("0", "")
 
     # cgroup v2: unified hierarchy means /sys/fs/cgroup is cgroup2
-    cgroup_result = _cmd(
-        conn, "findmnt -n -o FSTYPE /sys/fs/cgroup 2>&1"
-    )
+    cgroup_result = _cmd(conn, "findmnt -n -o FSTYPE /sys/fs/cgroup 2>&1")
     cgroup_v2 = "cgroup2" in _stdout(cgroup_result).lower()
 
     # Tailscale connected: "tailscale status" exits 0 and shows an IP
     tailscale_result = _cmd(conn, "tailscale status 2>&1", timeout=15)
     tailscale_connected = _ok(tailscale_result) and _stdout(tailscale_result) not in (
-        "", "Tailscale is stopped."
+        "",
+        "Tailscale is stopped.",
     )
 
     return SparkPrereqs(
@@ -356,7 +354,8 @@ def mac_prereqs(mac_ssh: Connection) -> MacPrereqs:
     # Tailscale connected
     tailscale_result = _cmd(conn, "tailscale status 2>&1", timeout=15)
     tailscale_connected = _ok(tailscale_result) and _stdout(tailscale_result) not in (
-        "", "Tailscale is stopped."
+        "",
+        "Tailscale is stopped.",
     )
 
     # Docker available on Mac (Docker Desktop / Colima)
@@ -415,7 +414,8 @@ def pi_prereqs(pi_ssh: Connection) -> PiPrereqs:
     # Tailscale connected
     tailscale_result = _cmd(conn, "tailscale status 2>&1", timeout=15)
     tailscale_connected = _ok(tailscale_result) and _stdout(tailscale_result) not in (
-        "", "Tailscale is stopped."
+        "",
+        "Tailscale is stopped.",
     )
 
     # Disk free on / in GB (Pi storage can be tight)

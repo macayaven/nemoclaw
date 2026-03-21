@@ -26,14 +26,14 @@ behavioral : Layer-B reachability tests (ping Spark via Tailscale).
 
 from __future__ import annotations
 
-import json
 import ipaddress
+import json
 from typing import Any
 
 import pytest
 from fabric import Connection
 
-from ..helpers import run_remote, parse_json_output
+from ..helpers import parse_json_output, run_remote
 from ..models import CommandResult
 from ..settings import TestSettings
 
@@ -83,7 +83,7 @@ def _parse_tailscale_json(result: CommandResult) -> dict[str, Any]:
     """
     try:
         return json.loads(result.stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         # Fall back to parse_json_output which scans for embedded JSON.
         raw = parse_json_output(result.stdout)
         if isinstance(raw, dict):
@@ -91,7 +91,7 @@ def _parse_tailscale_json(result: CommandResult) -> dict[str, Any]:
         raise ValueError(
             f"tailscale status --json returned unexpected JSON type "
             f"({type(raw).__name__}).\nRaw stdout: {result.stdout[:400]!r}"
-        )
+        ) from exc
 
 
 def _is_tailscale_connected(status_json: dict[str, Any]) -> bool:
@@ -180,9 +180,7 @@ class TestTailscaleSubnet:
             "Run 'sudo tailscale up' on the Pi to authenticate and connect."
         )
 
-    def test_subnet_route_advertised(
-        self, pi_ssh: Connection, test_settings: TestSettings
-    ) -> None:
+    def test_subnet_route_advertised(self, pi_ssh: Connection, test_settings: TestSettings) -> None:
         """The Pi must be advertising at least one LAN subnet into Tailscale.
 
         Checks the ``tailscale status --json`` output for advertised subnet
@@ -195,6 +193,7 @@ class TestTailscaleSubnet:
         environment or ``.env`` file.
         """
         import os
+
         expected_subnet_str = os.environ.get(
             "TAILSCALE_ADVERTISED_SUBNET", _DEFAULT_ADVERTISED_SUBNET
         )
@@ -202,8 +201,7 @@ class TestTailscaleSubnet:
             expected_network = ipaddress.ip_network(expected_subnet_str, strict=False)
         except ValueError:
             pytest.fail(
-                f"TAILSCALE_ADVERTISED_SUBNET={expected_subnet_str!r} is not a "
-                "valid CIDR network."
+                f"TAILSCALE_ADVERTISED_SUBNET={expected_subnet_str!r} is not a valid CIDR network."
             )
 
         result = _tailscale_status(pi_ssh)
@@ -231,9 +229,8 @@ class TestTailscaleSubnet:
         def _covers(advertised_str: str) -> bool:
             try:
                 advertised_net = ipaddress.ip_network(advertised_str, strict=False)
-                return (
-                    advertised_net == expected_network
-                    or expected_network.subnet_of(advertised_net)
+                return advertised_net == expected_network or expected_network.subnet_of(
+                    advertised_net
                 )
             except (ValueError, TypeError):
                 return False
@@ -281,9 +278,7 @@ class TestTailscaleAccess:
             )
 
         spark_ts_ip_str = str(spark_ts_ip)
-        ping_cmd = (
-            f"ping -c {_PING_COUNT} -W {_PING_TIMEOUT_SECS} {spark_ts_ip_str}"
-        )
+        ping_cmd = f"ping -c {_PING_COUNT} -W {_PING_TIMEOUT_SECS} {spark_ts_ip_str}"
 
         result: CommandResult = run_remote(pi_ssh, ping_cmd, timeout=30)
 
@@ -301,7 +296,9 @@ class TestTailscaleAccess:
 
         # Confirm at least one packet was received (not 100% loss).
         stdout_lower = result.stdout.lower()
-        packet_loss_line_found = "packet loss" in stdout_lower or "packets transmitted" in stdout_lower
+        packet_loss_line_found = (
+            "packet loss" in stdout_lower or "packets transmitted" in stdout_lower
+        )
         zero_loss = "0% packet loss" in stdout_lower or "0 packet loss" in stdout_lower
 
         if packet_loss_line_found:

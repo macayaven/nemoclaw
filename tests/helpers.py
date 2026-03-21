@@ -17,20 +17,19 @@ from typing import TYPE_CHECKING
 import httpx
 from packaging.version import Version
 from pydantic import BaseModel, ValidationError
-from tenacity import retry, stop_after_delay, wait_fixed, RetryError
+from tenacity import RetryError, retry, stop_after_delay, wait_fixed
 
 if TYPE_CHECKING:
     from fabric import Connection
 
 from .models import CommandResult
 
-
 # ---------------------------------------------------------------------------
 # Remote command execution
 # ---------------------------------------------------------------------------
 
 
-def run_remote(conn: "Connection", cmd: str, timeout: int = 30) -> CommandResult:
+def run_remote(conn: Connection, cmd: str, timeout: int = 30) -> CommandResult:
     """Run a shell command on a remote host via Fabric and return a CommandResult.
 
     Captures stdout, stderr, return_code, and wall-clock duration in
@@ -54,8 +53,8 @@ def run_remote(conn: "Connection", cmd: str, timeout: int = 30) -> CommandResult
     try:
         result = conn.run(
             cmd,
-            hide=True,       # suppress output to the console
-            warn=True,        # do not raise on non-zero exit
+            hide=True,  # suppress output to the console
+            warn=True,  # do not raise on non-zero exit
             timeout=timeout,
         )
     except Exception as exc:
@@ -64,8 +63,7 @@ def run_remote(conn: "Connection", cmd: str, timeout: int = 30) -> CommandResult
         exc_str = str(exc).lower()
         if "timed out" in exc_str or "timeout" in exc_str:
             raise TimeoutError(
-                f"Remote command timed out after {timeout}s on "
-                f"{conn.host!r}: {cmd!r}"
+                f"Remote command timed out after {timeout}s on {conn.host!r}: {cmd!r}"
             ) from exc
         raise
 
@@ -122,15 +120,11 @@ def poll_until_ready(
     try:
         _attempt()
     except RetryError as exc:
-        raise TimeoutError(
-            f"Condition not satisfied within {timeout}s: {label}"
-        ) from exc
+        raise TimeoutError(f"Condition not satisfied within {timeout}s: {label}") from exc
     except RuntimeError as exc:
         # tenacity re-raises the last RuntimeError when reraise=True; map it
         # to TimeoutError for a consistent interface.
-        raise TimeoutError(
-            f"Condition not satisfied within {timeout}s: {label}"
-        ) from exc
+        raise TimeoutError(f"Condition not satisfied within {timeout}s: {label}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +152,7 @@ def parse_json_output(output: str) -> dict | list:
     """
     # Attempt to parse each position that starts with { or [
     for match in re.finditer(r"[{\[]", output):
-        candidate = output[match.start():]
+        candidate = output[match.start() :]
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
@@ -171,9 +165,7 @@ def parse_json_output(output: str) -> dict | list:
     except json.JSONDecodeError:
         pass
 
-    raise ValueError(
-        f"No valid JSON found in output (first 200 chars): {output[:200]!r}"
-    )
+    raise ValueError(f"No valid JSON found in output (first 200 chars): {output[:200]!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -228,9 +220,7 @@ def parse_version(version_string: str) -> Version:
     cleaned = cleaned.rstrip(",.")
 
     if not cleaned:
-        raise ValueError(
-            f"Could not extract a version number from: {version_string!r}"
-        )
+        raise ValueError(f"Could not extract a version number from: {version_string!r}")
 
     return Version(cleaned)
 

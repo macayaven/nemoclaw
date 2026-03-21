@@ -9,14 +9,14 @@ Markers
 -------
 phase3     : All tests in this module belong to Phase 3.
 behavioral : Layer-B endpoint / network tests (hit real sockets).
-slow       : Tests that trigger real model inference (may take 30–120 s).
+slow       : Tests that trigger real model inference (may take 30-120 s).
 contract   : Layer-A schema / field-shape tests (fast, no inference).
 """
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 from ..helpers import assert_http_healthy, assert_json_schema
 from ..models import InferenceResponse, LiteLLMModelEntry, LiteLLMModelsResponse
@@ -105,18 +105,14 @@ class TestLiteLLMHealth:
                 timeout=15,
             )
         except httpx.ConnectError as exc:
-            pytest.fail(
-                f"Cannot connect to LiteLLM at {litellm_url}{_MODELS_ENDPOINT}: {exc}"
-            )
+            pytest.fail(f"Cannot connect to LiteLLM at {litellm_url}{_MODELS_ENDPOINT}: {exc}")
 
         assert response.status_code == 200, (
             f"GET {_MODELS_ENDPOINT} returned {response.status_code}.\n"
             f"Body: {response.text[:400]!r}"
         )
 
-        models_response: LiteLLMModelsResponse = assert_json_schema(
-            response, LiteLLMModelsResponse
-        )
+        models_response: LiteLLMModelsResponse = assert_json_schema(response, LiteLLMModelsResponse)
 
         model_ids_lower = [mid.lower() for mid in models_response.model_ids]
 
@@ -148,9 +144,7 @@ class TestLiteLLMHealth:
 class TestLiteLLMRouting:
     """Verify model routing: nemotron → Spark, qwen3 → Mac Studio."""
 
-    def _post_completion(
-        self, litellm_url: str, model: str, timeout: int = 120
-    ) -> httpx.Response:
+    def _post_completion(self, litellm_url: str, model: str, timeout: int = 120) -> httpx.Response:
         """POST a minimal chat completion request and return the raw response.
 
         Args:
@@ -182,12 +176,9 @@ class TestLiteLLMRouting:
         )
         models_data = LiteLLMModelsResponse.model_validate(models_resp.json())
         nemotron_ids = [
-            mid for mid in models_data.model_ids
-            if _NEMOTRON_MODEL_SUBSTR in mid.lower()
+            mid for mid in models_data.model_ids if _NEMOTRON_MODEL_SUBSTR in mid.lower()
         ]
-        assert nemotron_ids, (
-            "No nemotron model registered in LiteLLM; cannot test routing."
-        )
+        assert nemotron_ids, "No nemotron model registered in LiteLLM; cannot test routing."
         nemotron_model = nemotron_ids[0]
 
         try:
@@ -247,12 +238,11 @@ class TestLiteLLMRouting:
         models_data = LiteLLMModelsResponse.model_validate(models_resp.json())
 
         # Prefer qwen3 because it tends to be faster on Mac Studio.
-        qwen_ids = [
-            mid for mid in models_data.model_ids
-            if _QWEN_MODEL_SUBSTR in mid.lower()
-        ]
-        model_id = qwen_ids[0] if qwen_ids else (
-            models_data.model_ids[0] if models_data.model_ids else _QWEN_FULL_MODEL
+        qwen_ids = [mid for mid in models_data.model_ids if _QWEN_MODEL_SUBSTR in mid.lower()]
+        model_id = (
+            qwen_ids[0]
+            if qwen_ids
+            else (models_data.model_ids[0] if models_data.model_ids else _QWEN_FULL_MODEL)
         )
 
         try:
@@ -287,7 +277,7 @@ class TestLiteLLMNegative:
 
         The proxy must not silently succeed or return 200 with an empty body
         when given a model that is not in its routing table.  Any error status
-        code (400–599) is acceptable; a connection error is not.
+        code (400-599) is acceptable; a connection error is not.
         """
         try:
             response = httpx.post(
@@ -299,9 +289,7 @@ class TestLiteLLMNegative:
                 timeout=30,
             )
         except httpx.ConnectError as exc:
-            pytest.fail(
-                f"LiteLLM proxy is unreachable when testing invalid model: {exc}"
-            )
+            pytest.fail(f"LiteLLM proxy is unreachable when testing invalid model: {exc}")
 
         assert response.status_code >= 400, (
             f"Expected a 4xx/5xx error for an invalid model, "
@@ -322,13 +310,9 @@ class TestLiteLLMNegative:
         except httpx.ConnectError as exc:
             pytest.fail(f"Cannot reach /v1/models for contract check: {exc}")
 
-        assert response.status_code == 200, (
-            f"GET /v1/models returned {response.status_code}."
-        )
+        assert response.status_code == 200, f"GET /v1/models returned {response.status_code}."
 
-        models_response: LiteLLMModelsResponse = assert_json_schema(
-            response, LiteLLMModelsResponse
-        )
+        models_response: LiteLLMModelsResponse = assert_json_schema(response, LiteLLMModelsResponse)
 
         assert models_response.data, (
             "LiteLLM returned an empty model list — no routes are configured."
@@ -338,12 +322,9 @@ class TestLiteLLMNegative:
             assert isinstance(entry, LiteLLMModelEntry), (
                 f"Expected LiteLLMModelEntry, got {type(entry)}"
             )
-            assert entry.id, (
-                f"Model entry has an empty id field: {entry!r}"
-            )
+            assert entry.id, f"Model entry has an empty id field: {entry!r}"
             assert entry.object_type == "model", (
-                f"Model entry {entry.id!r} has object={entry.object_type!r}, "
-                "expected 'model'."
+                f"Model entry {entry.id!r} has object={entry.object_type!r}, expected 'model'."
             )
             # owned_by may be an empty string for self-hosted models — just
             # check the field exists (already guaranteed by Pydantic parsing).

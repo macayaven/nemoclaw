@@ -25,9 +25,8 @@ import httpx
 import pytest
 from fabric import Connection
 
-from ..models import CommandResult, SandboxInfo, InferenceResponse
-from ..helpers import run_remote, parse_json_output, assert_http_healthy
-
+from ..helpers import parse_json_output, run_remote
+from ..models import CommandResult, InferenceResponse
 
 # ---------------------------------------------------------------------------
 # Contract tests — sandbox existence and configuration
@@ -65,8 +64,7 @@ class TestSandboxExists:
                 sandboxes = json.loads(raw)
                 if isinstance(sandboxes, list):
                     names = [
-                        s.get("name", "") if isinstance(s, dict) else str(s)
-                        for s in sandboxes
+                        s.get("name", "") if isinstance(s, dict) else str(s) for s in sandboxes
                     ]
                     found_in_json = "nemoclaw-main" in names
                 elif isinstance(sandboxes, dict):

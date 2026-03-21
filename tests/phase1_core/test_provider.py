@@ -13,15 +13,13 @@ contract : Layer-A contract / schema tests (fast, SSH only, no inference).
 
 from __future__ import annotations
 
-import json
 import uuid
 
 import pytest
 from fabric import Connection
 
+from ..helpers import parse_json_output, run_remote
 from ..models import CommandResult, OpenShellProvider
-from ..helpers import run_remote, parse_json_output
-
 
 # ---------------------------------------------------------------------------
 # Contract tests — provider registration and configuration

@@ -28,14 +28,11 @@ test_settings      : TestSettings — provides host and timeout configuration.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from fabric import Connection
 
 from ..helpers import run_remote
 from ..models import CommandResult
-from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -46,10 +43,10 @@ _NEMOCLAW_UI_PORT: int = 18789
 # Prefixes for IP addresses that are considered "internal" (LAN or Tailscale).
 # The test asserts that port 18789 is only bound to addresses in these ranges.
 _INTERNAL_PREFIXES: tuple[str, ...] = (
-    "127.",       # loopback
-    "10.",        # RFC1918 class A
-    "172.16.",    # RFC1918 class B (first /12 block)
-    "172.17.",    # Docker default bridge
+    "127.",  # loopback
+    "10.",  # RFC1918 class A
+    "172.16.",  # RFC1918 class B (first /12 block)
+    "172.17.",  # Docker default bridge
     "172.18.",
     "172.19.",
     "172.20.",
@@ -64,9 +61,9 @@ _INTERNAL_PREFIXES: tuple[str, ...] = (
     "172.29.",
     "172.30.",
     "172.31.",
-    "192.168.",   # RFC1918 class C
-    "100.",       # Tailscale CGNAT range (100.64.0.0/10)
-    "0.0.0.0",    # all-interfaces bind — checked separately below
+    "192.168.",  # RFC1918 class C
+    "100.",  # Tailscale CGNAT range (100.64.0.0/10)
+    "0.0.0.0",  # all-interfaces bind — checked separately below
 )
 
 
@@ -143,8 +140,7 @@ class TestRemoteAccess:
             timeout=15,
         )
         assert result.return_code == 0, (
-            f"'ss -tlnp' failed on Spark (exit {result.return_code}). "
-            f"stderr: {result.stderr!r}"
+            f"'ss -tlnp' failed on Spark (exit {result.return_code}). stderr: {result.stderr!r}"
         )
         ss_output = result.stdout
 
@@ -187,8 +183,7 @@ class TestRemoteAccess:
         issues: list[str] = []
         if public_bindings:
             issues.append(
-                f"Port {_NEMOCLAW_UI_PORT} is bound to public IP(s): "
-                + ", ".join(public_bindings)
+                f"Port {_NEMOCLAW_UI_PORT} is bound to public IP(s): " + ", ".join(public_bindings)
             )
         if wildcard_bindings:
             issues.append(

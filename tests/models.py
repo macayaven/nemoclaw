@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Optional
+from typing import Any
 
 from packaging.version import InvalidVersion, Version
 from pydantic import (
@@ -90,7 +90,7 @@ class CommandResult(BaseModel):
         return not self.succeeded
 
     @classmethod
-    def timed(cls, stdout: str, stderr: str, return_code: int, start_ns: int) -> "CommandResult":
+    def timed(cls, stdout: str, stderr: str, return_code: int, start_ns: int) -> CommandResult:
         """Construct a CommandResult using a start timestamp from time.perf_counter_ns."""
         elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
         return cls(
@@ -115,38 +115,26 @@ class SparkPrereqs(BaseModel):
 
     # Local inference
     ollama_version: str = Field(description="Raw Ollama version string (e.g. '0.3.12').")
-    models_available: list[str] = Field(
-        description="Names of models currently pulled in Ollama."
-    )
+    models_available: list[str] = Field(description="Names of models currently pulled in Ollama.")
 
     # Storage
-    disk_free_gb: float = Field(
-        description="Free disk space in GiB on the primary partition."
-    )
-    disk_inodes_free: int = Field(
-        description="Free inodes on the primary partition."
-    )
+    disk_free_gb: float = Field(description="Free disk space in GiB on the primary partition.")
+    disk_inodes_free: int = Field(description="Free inodes on the primary partition.")
 
     # Node.js / npm (required by NemoClaw)
     node_version: str = Field(description="Raw Node.js version string (e.g. 'v20.11.0').")
     npm_version: str = Field(description="Raw npm version string (e.g. '10.2.4').")
 
     # Kernel security features required for sandbox isolation
-    landlock_supported: bool = Field(
-        description="True when the kernel exposes Landlock LSM."
-    )
-    seccomp_supported: bool = Field(
-        description="True when seccomp filtering is available."
-    )
-    cgroup_v2: bool = Field(
-        description="True when cgroup v2 (unified hierarchy) is active."
-    )
+    landlock_supported: bool = Field(description="True when the kernel exposes Landlock LSM.")
+    seccomp_supported: bool = Field(description="True when seccomp filtering is available.")
+    cgroup_v2: bool = Field(description="True when cgroup v2 (unified hierarchy) is active.")
 
     # Networking
     tailscale_connected: bool = Field(
         description="True when Tailscale reports the node as connected."
     )
-    tailscale_ip: Optional[str] = Field(
+    tailscale_ip: str | None = Field(
         default=None,
         description="Tailscale-assigned IPv4 address, if connected.",
     )
@@ -155,7 +143,9 @@ class SparkPrereqs(BaseModel):
     # Version validators
     # ------------------------------------------------------------------
 
-    @field_validator("docker_version", "ollama_version", "node_version", "npm_version", mode="before")
+    @field_validator(
+        "docker_version", "ollama_version", "node_version", "npm_version", mode="before"
+    )
     @classmethod
     def _validate_version_string(cls, v: Any) -> str:
         raw = str(v).strip()
@@ -198,7 +188,7 @@ class MacPrereqs(BaseModel):
     tailscale_connected: bool = Field(
         description="True when Tailscale reports the Mac as connected."
     )
-    tailscale_ip: Optional[str] = Field(
+    tailscale_ip: str | None = Field(
         default=None,
         description="Tailscale-assigned IPv4 address, if connected.",
     )
@@ -223,18 +213,14 @@ class MacPrereqs(BaseModel):
 class PiPrereqs(BaseModel):
     """Pre-flight checks for the Raspberry Pi infrastructure node (phase 0 / phase 3)."""
 
-    free_ram_mb: int = Field(
-        description="Free + buffers/cache RAM available on the Pi in MiB."
-    )
-    python3_version: str = Field(
-        description="Raw Python 3 version string (e.g. '3.11.9')."
-    )
+    free_ram_mb: int = Field(description="Free + buffers/cache RAM available on the Pi in MiB.")
+    python3_version: str = Field(description="Raw Python 3 version string (e.g. '3.11.9').")
 
     # Networking / Tailscale
     tailscale_connected: bool = Field(
         description="True when Tailscale reports the Pi as connected."
     )
-    tailscale_ip: Optional[str] = Field(
+    tailscale_ip: str | None = Field(
         default=None,
         description="Tailscale-assigned IPv4 address, if connected.",
     )
@@ -260,9 +246,7 @@ class OllamaModelInfo(BaseModel):
     """A single model entry from the Ollama /api/tags response."""
 
     name: str = Field(description="Full model name including tag, e.g. 'llama3:8b'.")
-    size_gb: float = Field(
-        description="Model size on disk in gibibytes."
-    )
+    size_gb: float = Field(description="Model size on disk in gibibytes.")
     family: str = Field(
         default="unknown",
         description="Model architecture family (e.g. 'llama', 'mistral').",
@@ -318,7 +302,7 @@ class OllamaTagsResponse(BaseModel):
         """Return the list of full model name strings."""
         return [m.name for m in self.models]
 
-    def find(self, name: str) -> Optional[OllamaModelInfo]:
+    def find(self, name: str) -> OllamaModelInfo | None:
         """Return the first model whose name contains ``name``, or None."""
         for m in self.models:
             if name in m.name:
@@ -335,10 +319,8 @@ class OpenShellProvider(BaseModel):
     """A configured provider entry in the NemoClaw OpenShell configuration."""
 
     name: str = Field(description="Logical name for this provider (e.g. 'spark-ollama').")
-    type: str = Field(
-        description="Provider type: 'ollama', 'openai', 'anthropic', 'litellm', etc."
-    )
-    base_url: Optional[str] = Field(
+    type: str = Field(description="Provider type: 'ollama', 'openai', 'anthropic', 'litellm', etc.")
+    base_url: str | None = Field(
         default=None,
         description="Base URL for providers that expose an HTTP API (e.g. Ollama, LiteLLM).",
     )
@@ -431,7 +413,7 @@ class InferenceChoice(BaseModel):
 
     index: int = Field(default=0)
     message: MessageContent
-    finish_reason: Optional[str] = Field(default=None)
+    finish_reason: str | None = Field(default=None)
 
 
 class InferenceUsage(BaseModel):
@@ -442,7 +424,7 @@ class InferenceUsage(BaseModel):
     total_tokens: int = Field(default=0)
 
     @model_validator(mode="after")
-    def _validate_total(self) -> "InferenceUsage":
+    def _validate_total(self) -> InferenceUsage:
         expected = self.prompt_tokens + self.completion_tokens
         if self.total_tokens == 0 and expected > 0:
             # Some providers omit total_tokens; compute it ourselves.
@@ -458,10 +440,8 @@ class InferenceResponse(BaseModel):
     """
 
     model: str = Field(description="Model identifier echoed by the provider.")
-    choices: list[InferenceChoice] = Field(
-        description="One or more completion choices."
-    )
-    usage: Optional[InferenceUsage] = Field(default=None)
+    choices: list[InferenceChoice] = Field(description="One or more completion choices.")
+    usage: InferenceUsage | None = Field(default=None)
 
     @field_validator("choices", mode="before")
     @classmethod

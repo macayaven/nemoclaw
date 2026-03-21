@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import os
 
-import pytest
 import httpx
+import pytest
 
 from ..settings import TestSettings
 
@@ -194,13 +194,9 @@ class TestMonitoringNegative:
                         f"Found {len(heartbeat_list)} monitor(s) via status-page API."
                     )
                 else:
-                    diagnostics.append(
-                        "Status-page heartbeat API returned an empty heartbeatList."
-                    )
+                    diagnostics.append("Status-page heartbeat API returned an empty heartbeatList.")
             else:
-                diagnostics.append(
-                    f"Status-page heartbeat API returned {sp_response.status_code}."
-                )
+                diagnostics.append(f"Status-page heartbeat API returned {sp_response.status_code}.")
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             diagnostics.append(f"Status-page heartbeat API unreachable: {exc}")
         except Exception as exc:
@@ -216,9 +212,7 @@ class TestMonitoringNegative:
                     # monitors exist.
                     if "monitor_status" in m_response.text or "monitor_" in m_response.text:
                         monitors_found = True
-                        diagnostics.append(
-                            "Found monitor metrics in /metrics endpoint."
-                        )
+                        diagnostics.append("Found monitor metrics in /metrics endpoint.")
                     else:
                         diagnostics.append(
                             "/metrics endpoint returned 200 but contained no "

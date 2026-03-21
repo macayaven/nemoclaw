@@ -14,13 +14,12 @@ behavioral : Layer-B endpoint / network tests.
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 from fabric import Connection
 
+from ..helpers import poll_until_ready, run_remote
 from ..models import CommandResult
-from ..helpers import run_remote, poll_until_ready
-
 
 # ---------------------------------------------------------------------------
 # Behavioral tests — gateway startup and status

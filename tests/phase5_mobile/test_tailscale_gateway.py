@@ -24,7 +24,6 @@ test_settings      : TestSettings — provides HTTP timeout configuration.
 from __future__ import annotations
 
 import pytest
-import httpx
 
 from ..helpers import assert_http_healthy
 from ..settings import TestSettings

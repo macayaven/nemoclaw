@@ -31,7 +31,7 @@ import pytest
 from fabric import Connection
 from packaging.version import Version
 
-from ..helpers import parse_version, run_remote
+from ..helpers import run_remote
 from ..models import CommandResult, MacPrereqs
 
 # ---------------------------------------------------------------------------
@@ -126,8 +126,7 @@ class TestMacSSH:
         # Run from the Mac: SSH to Spark and echo a sentinel value
         result: CommandResult = run_remote(
             mac_ssh,
-            f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
-            f"carlos@{spark_ip} 'echo OK'",
+            f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 carlos@{spark_ip} 'echo OK'",
             timeout=30,
         )
         assert result.return_code == 0, (

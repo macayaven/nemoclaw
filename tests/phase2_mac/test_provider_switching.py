@@ -43,7 +43,6 @@ from fabric import Connection
 from ..helpers import parse_json_output, run_remote
 from ..models import CommandResult, InferenceResponse, OpenShellInferenceRoute
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -54,8 +53,8 @@ _MAC_MODEL = "qwen3:8b"
 _SPARK_PROVIDER_NAME = "local-ollama"
 _SPARK_MODEL = "nemotron-3-super:120b"
 
-_MAC_INFERENCE_TIMEOUT = 30     # seconds — Qwen3:8b on Apple Silicon is fast
-_SPARK_INFERENCE_TIMEOUT = 90   # seconds — Nemotron 120B may need cold-start GPU load
+_MAC_INFERENCE_TIMEOUT = 30  # seconds — Qwen3:8b on Apple Silicon is fast
+_SPARK_INFERENCE_TIMEOUT = 90  # seconds — Nemotron 120B may need cold-start GPU load
 
 
 # ---------------------------------------------------------------------------
@@ -136,11 +135,7 @@ def _run_inference_in_sandbox(
         f'"max_tokens":30'
         f"}}'"
     )
-    run_cmd = (
-        f"openshell sandbox run "
-        f"--name {sandbox_name} "
-        f"-- {curl_cmd}"
-    )
+    run_cmd = f"openshell sandbox run --name {sandbox_name} -- {curl_cmd}"
     result = run_remote(conn, run_cmd, timeout=timeout)
 
     # Best-effort cleanup — ignore errors
@@ -201,7 +196,7 @@ class TestSwitchToMac:
         - The first choice's message content is non-empty.
 
         The 30-second timeout accommodates Qwen3:8b on Apple Silicon M-series,
-        which typically responds within 5–15 seconds after the model is warm.
+        which typically responds within 5-15 seconds after the model is warm.
         Cold-start (first request after idle) may take up to 25 seconds.
         """
         result, _ = _run_inference_in_sandbox(
@@ -292,9 +287,7 @@ class TestSwitchBack:
 
     @pytest.mark.slow
     @pytest.mark.timeout(_SPARK_INFERENCE_TIMEOUT + 10)
-    def test_nemotron_inference_works_after_switch_back(
-        self, spark_ssh: Connection
-    ) -> None:
+    def test_nemotron_inference_works_after_switch_back(self, spark_ssh: Connection) -> None:
         """Nemotron inference still works after a round-trip provider switch.
 
         A round-trip switch (Spark → Mac → Spark) exercises the route-state

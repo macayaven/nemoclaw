@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,7 +43,7 @@ class HostSettings(BaseSettings):
     hostname: str
     ip: IPv4Address
     user: str = "carlos"
-    ssh_key: Optional[Path] = Field(
+    ssh_key: Path | None = Field(
         default=None,
         description="Path to the SSH private key used to connect to this host. "
         "Falls back to ssh-agent / ~/.ssh/id_* when None.",
@@ -82,7 +81,7 @@ class SparkSettings(HostSettings):
     hostname: str = "spark-caeb.local"
     ip: IPv4Address = IPv4Address("192.168.1.10")
     user: str = "carlos"
-    ssh_key: Optional[Path] = None
+    ssh_key: Path | None = None
 
     # NemoClaw / OpenShell service
     nemoclaw_port: int = Field(default=4000, description="NemoClaw HTTP port")
@@ -111,7 +110,7 @@ class SparkSettings(HostSettings):
     )
 
     # Tailscale
-    tailscale_ip: Optional[IPv4Address] = Field(
+    tailscale_ip: IPv4Address | None = Field(
         default=None,
         description="Tailscale IP of the Spark node (populated at runtime if "
         "SPARK_TAILSCALE_IP is set in the environment)",
@@ -131,7 +130,7 @@ class MacSettings(HostSettings):
     hostname: str = "mac-studio.local"
     ip: IPv4Address = IPv4Address("192.168.1.20")
     user: str = "carlos"
-    ssh_key: Optional[Path] = None
+    ssh_key: Path | None = None
 
     # Ollama on Mac Studio
     ollama_port: int = Field(default=11434, description="Ollama API port on Mac Studio")
@@ -147,7 +146,7 @@ class MacSettings(HostSettings):
     )
 
     # Tailscale
-    tailscale_ip: Optional[IPv4Address] = Field(
+    tailscale_ip: IPv4Address | None = Field(
         default=None,
         description="Tailscale IP of the Mac Studio node",
     )
@@ -166,7 +165,7 @@ class PiSettings(HostSettings):
     hostname: str = "raspi.local"
     ip: IPv4Address = IPv4Address("192.168.1.30")
     user: str = "carlos"
-    ssh_key: Optional[Path] = None
+    ssh_key: Path | None = None
 
     # LiteLLM proxy
     litellm_port: int = Field(default=4000, description="LiteLLM proxy HTTP port")
@@ -186,7 +185,7 @@ class PiSettings(HostSettings):
     )
 
     # Tailscale
-    tailscale_ip: Optional[IPv4Address] = Field(
+    tailscale_ip: IPv4Address | None = Field(
         default=None,
         description="Tailscale IP of the Raspberry Pi node",
     )
@@ -212,17 +211,17 @@ class TestSettings(BaseSettings):
     pi: PiSettings = Field(default_factory=PiSettings)
 
     # ---- API keys (optional — tests that need them are skipped when absent) ----
-    anthropic_api_key: Optional[SecretStr] = Field(
+    anthropic_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="ANTHROPIC_API_KEY",
         description="Anthropic API key for Claude integration tests",
     )
-    openai_api_key: Optional[SecretStr] = Field(
+    openai_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="OPENAI_API_KEY",
         description="OpenAI API key for GPT integration tests",
     )
-    gemini_api_key: Optional[SecretStr] = Field(
+    gemini_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="GEMINI_API_KEY",
         description="Google Gemini API key for Gemini integration tests",
@@ -231,17 +230,17 @@ class TestSettings(BaseSettings):
     # ---- Tailscale overlay network ----
     # These mirror the per-host tailscale_ip fields but are exposed at the top
     # level for tests that need to iterate over all Tailscale addresses.
-    tailscale_spark_ip: Optional[IPv4Address] = Field(
+    tailscale_spark_ip: IPv4Address | None = Field(
         default=None,
         validation_alias="TAILSCALE_SPARK_IP",
         description="Tailscale IP of spark-caeb",
     )
-    tailscale_mac_ip: Optional[IPv4Address] = Field(
+    tailscale_mac_ip: IPv4Address | None = Field(
         default=None,
         validation_alias="TAILSCALE_MAC_IP",
         description="Tailscale IP of mac-studio",
     )
-    tailscale_pi_ip: Optional[IPv4Address] = Field(
+    tailscale_pi_ip: IPv4Address | None = Field(
         default=None,
         validation_alias="TAILSCALE_PI_IP",
         description="Tailscale IP of raspi",
@@ -267,7 +266,7 @@ class TestSettings(BaseSettings):
         return [self.spark, self.mac, self.pi]
 
     @property
-    def tailscale_ips(self) -> dict[str, Optional[IPv4Address]]:
+    def tailscale_ips(self) -> dict[str, IPv4Address | None]:
         """Return a mapping of node name -> Tailscale IP."""
         return {
             "spark": self.tailscale_spark_ip or self.spark.tailscale_ip,

@@ -23,6 +23,8 @@ spark_ssh : fabric.Connection — live SSH connection to the DGX Spark node.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from fabric import Connection
 
@@ -63,9 +65,7 @@ class TestFilesystemIsolation:
     one agent to read or tamper with another agent's working files.
     """
 
-    def test_file_created_in_one_not_visible_in_other(
-        self, spark_ssh: Connection
-    ) -> None:
+    def test_file_created_in_one_not_visible_in_other(self, spark_ssh: Connection) -> None:
         """A file written inside claude-dev is not visible inside codex-dev.
 
         Procedure:
@@ -137,9 +137,7 @@ class TestNetworkIsolation:
     bypassing the local-model requirement by calling external inference APIs.
     """
 
-    def test_sandbox_cannot_reach_unapproved_endpoint(
-        self, spark_ssh: Connection
-    ) -> None:
+    def test_sandbox_cannot_reach_unapproved_endpoint(self, spark_ssh: Connection) -> None:
         """A curl request to 8.8.8.8 from inside claude-dev is blocked.
 
         Uses ``curl --max-time 5`` to attempt an HTTP connection to
@@ -164,10 +162,8 @@ class TestNetworkIsolation:
         exit_code: int | None = None
         for part in combined.split():
             if part.startswith("EXIT:"):
-                try:
+                with contextlib.suppress(ValueError):
                     exit_code = int(part.split(":", 1)[1])
-                except ValueError:
-                    pass
                 break
 
         # curl exit code 0 means an HTTP response was received — egress not blocked.

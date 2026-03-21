@@ -16,7 +16,7 @@ Markers
 -------
 phase1     : All tests in this module belong to Phase 1.
 behavioral : Layer-B resilience / end-to-end tests.
-slow       : Gateway restart includes k3s bootstrap time (~60–120 s).
+slow       : Gateway restart includes k3s bootstrap time (~60-120 s).
 """
 
 from __future__ import annotations
@@ -26,9 +26,8 @@ import time
 import pytest
 from fabric import Connection
 
+from ..helpers import poll_until_ready, run_remote
 from ..models import CommandResult
-from ..helpers import run_remote, poll_until_ready
-
 
 # ---------------------------------------------------------------------------
 # Helpers — private to this module
@@ -109,12 +108,8 @@ class TestIdempotency:
         # ------------------------------------------------------------------ #
         # Pre-restart: capture the expected state                              #
         # ------------------------------------------------------------------ #
-        pre_provider: CommandResult = run_remote(
-            spark_ssh, "openshell provider list"
-        )
-        pre_inference: CommandResult = run_remote(
-            spark_ssh, "openshell inference get"
-        )
+        pre_provider: CommandResult = run_remote(spark_ssh, "openshell provider list")
+        pre_inference: CommandResult = run_remote(spark_ssh, "openshell inference get")
 
         assert "local-ollama" in pre_provider.stdout, (
             "Pre-restart: provider 'local-ollama' is not registered — "
@@ -138,12 +133,8 @@ class TestIdempotency:
         # ------------------------------------------------------------------ #
         # Post-restart: assert state is preserved                              #
         # ------------------------------------------------------------------ #
-        post_provider: CommandResult = run_remote(
-            spark_ssh, "openshell provider list"
-        )
-        post_inference: CommandResult = run_remote(
-            spark_ssh, "openshell inference get"
-        )
+        post_provider: CommandResult = run_remote(spark_ssh, "openshell provider list")
+        post_inference: CommandResult = run_remote(spark_ssh, "openshell inference get")
 
         assert "local-ollama" in post_provider.stdout, (
             "IDEMPOTENCY FAILURE: provider 'local-ollama' is missing after gateway restart.\n"
@@ -186,9 +177,7 @@ class TestIdempotency:
         # ------------------------------------------------------------------ #
         # Pre-restart: confirm the sandbox exists                              #
         # ------------------------------------------------------------------ #
-        pre_list: CommandResult = run_remote(
-            spark_ssh, "openshell sandbox list"
-        )
+        pre_list: CommandResult = run_remote(spark_ssh, "openshell sandbox list")
 
         assert "nemoclaw-main" in pre_list.stdout, (
             "Pre-restart: sandbox 'nemoclaw-main' is not in the sandbox list — "
@@ -205,9 +194,7 @@ class TestIdempotency:
         # ------------------------------------------------------------------ #
         # Post-restart: confirm the sandbox is still there                    #
         # ------------------------------------------------------------------ #
-        post_list: CommandResult = run_remote(
-            spark_ssh, "openshell sandbox list"
-        )
+        post_list: CommandResult = run_remote(spark_ssh, "openshell sandbox list")
 
         assert "nemoclaw-main" in post_list.stdout, (
             "IDEMPOTENCY FAILURE: sandbox 'nemoclaw-main' disappeared after gateway restart.\n"

@@ -87,11 +87,7 @@ def _is_nxdomain(result: CommandResult) -> bool:
       - "server can't find <host>: NXDOMAIN"
     """
     combined = (result.stdout + result.stderr).lower()
-    return (
-        "nxdomain" in combined
-        or "can't find" in combined
-        or "non-existent domain" in combined
-    )
+    return "nxdomain" in combined or "can't find" in combined or "non-existent domain" in combined
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +127,7 @@ class TestDNSResolution:
         # or an IPv6 address.  ``nslookup`` on success prints lines like:
         #   Address: 192.168.1.10
         import re
+
         address_pattern = re.compile(
             r"address:\s+(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)",
             re.IGNORECASE,
@@ -138,10 +135,7 @@ class TestDNSResolution:
         matches = address_pattern.findall(result.stdout)
         # Filter out the DNS server's own address line (first Address: line is
         # often the server itself when nslookup is in non-interactive mode).
-        non_server_addresses = [
-            addr for addr in matches
-            if not result.stdout.lower().startswith(f"server:")
-        ]
+        [addr for addr in matches if not result.stdout.lower().startswith("server:")]
         assert matches, (
             f"nslookup for '{hostname}' succeeded but no IP address was found "
             f"in the output.\n"

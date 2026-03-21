@@ -99,9 +99,7 @@ class TestAllSandboxesRunning:
     """
 
     @pytest.mark.parametrize("sandbox_name", _EXPECTED_SANDBOXES)
-    def test_four_sandboxes_exist(
-        self, spark_ssh: Connection, sandbox_name: str
-    ) -> None:
+    def test_four_sandboxes_exist(self, spark_ssh: Connection, sandbox_name: str) -> None:
         """Each of the four expected sandbox containers is running.
 
         Queries Docker for the given container name and asserts its status is
@@ -188,11 +186,7 @@ class TestNoPortConflicts:
             for port in info.ports:
                 port_to_sandboxes.setdefault(port, []).append(info.name)
 
-        conflicts = {
-            port: owners
-            for port, owners in port_to_sandboxes.items()
-            if len(owners) > 1
-        }
+        conflicts = {port: owners for port, owners in port_to_sandboxes.items() if len(owners) > 1}
 
         assert not conflicts, (
             "Duplicate host-side port bindings detected across sandboxes. "
@@ -230,9 +224,7 @@ class TestConcurrentAccess:
         received exactly its own token in stdout.  Cross-contaminated tokens
         would indicate output multiplexing bugs in the sandbox execution layer.
         """
-        tokens: dict[str, str] = {
-            name: generate_unique_id() for name in _CONCURRENT_SANDBOXES
-        }
+        tokens: dict[str, str] = {name: generate_unique_id() for name in _CONCURRENT_SANDBOXES}
         results: dict[str, CommandResult] = {}
         errors: dict[str, Exception] = {}
         lock = threading.Lock()
@@ -247,7 +239,7 @@ class TestConcurrentAccess:
                 )
                 with lock:
                     results[sandbox_name] = result
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 with lock:
                     errors[sandbox_name] = exc
 
@@ -263,12 +255,8 @@ class TestConcurrentAccess:
 
         # Report all errors first so the operator sees the full picture.
         if errors:
-            error_lines = "\n".join(
-                f"  {name}: {exc}" for name, exc in sorted(errors.items())
-            )
-            pytest.fail(
-                f"Concurrent sandbox commands raised exceptions:\n{error_lines}"
-            )
+            error_lines = "\n".join(f"  {name}: {exc}" for name, exc in sorted(errors.items()))
+            pytest.fail(f"Concurrent sandbox commands raised exceptions:\n{error_lines}")
 
         # Verify each sandbox returned its own unique token.
         for sandbox_name in _CONCURRENT_SANDBOXES:
