@@ -1,0 +1,44 @@
+[project]
+name = "nemoclaw-tests"
+version = "0.1.0"
+description = "TDD test suite for NemoClaw multi-node deployment"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "pytest-xdist>=3.5",
+    "pytest-rerunfailures>=14.0",
+    "pytest-testinfra>=10.0",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "fabric>=3.2",
+    "tenacity>=9.0",
+    "packaging>=24.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "isort>=5.13",
+    "pydocstyle>=6.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = [
+    "phase0: Pre-flight checks",
+    "phase1: Core NemoClaw on Spark",
+    "phase2: Mac Studio integration",
+    "phase3: Raspberry Pi infrastructure",
+    "phase4: Coding agent sandboxes",
+    "phase5: Mobile and Tailscale",
+    "contract: Layer A contract/schema tests",
+    "behavioral: Layer B behavioral/e2e tests",
+    "slow: Tests that take >30s (cold starts, model loading)",
+    "negative: Negative/failure path tests",
+]
+timeout = 60
+timeout_method = "signal"

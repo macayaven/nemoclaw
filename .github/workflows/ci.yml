@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync
+        working-directory: tests
+
+      - name: Lint (ruff)
+        run: uv run ruff check tests/
+        working-directory: tests
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check tests/
+        working-directory: tests
+
+      - name: Import sorting (isort)
+        run: uv run isort --check-only tests/
+        working-directory: tests
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync
+        working-directory: tests
+
+      - name: Type check (mypy)
+        run: uv run mypy tests/ --ignore-missing-imports
+        working-directory: tests
+
+  docstrings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync
+        working-directory: tests
+
+      - name: Docstring check (pydocstyle)
+        run: uv run pydocstyle tests/ --convention=google --add-ignore=D100,D104
+        working-directory: tests
+
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax validation
+        run: python -c "import ast; import glob; [ast.parse(open(f).read()) for f in glob.glob('tests/**/*.py', recursive=True)]"
+
+  test-collection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync
+        working-directory: tests
+
+      - name: Test collection (pytest --collect-only)
+        run: uv run pytest tests/ --collect-only -q
+        working-directory: tests
