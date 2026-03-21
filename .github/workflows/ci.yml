@@ -48,7 +48,7 @@ jobs:
         run: uv sync
 
       - name: Type check (mypy)
-        run: uv run mypy . --ignore-missing-imports
+        run: uv run mypy . --config-file ../pyproject.toml
 
   docstrings:
     runs-on: ubuntu-latest
@@ -65,7 +65,7 @@ jobs:
         run: uv sync
 
       - name: Docstring check (pydocstyle)
-        run: uv run pydocstyle . --convention=google --add-ignore=D100,D104
+        run: uv run pydocstyle . --config ../pyproject.toml
 
   syntax:
     runs-on: ubuntu-latest

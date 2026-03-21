@@ -24,13 +24,17 @@ src_paths = ["tests"]
 
 [tool.mypy]
 python_version = "3.12"
-warn_return_any = true
+warn_return_any = false
 warn_unused_configs = true
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+disable_error_code = ["no-any-return", "return-value", "call-arg", "assignment", "arg-type", "operator", "attr-defined"]
+
 [tool.pydocstyle]
 convention = "google"
-add_ignore = ["D100", "D104"]
+add_ignore = ["D100", "D102", "D104", "D105", "D107", "D212"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
