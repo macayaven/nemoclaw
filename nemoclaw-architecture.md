@@ -212,13 +212,72 @@ NVIDIA's optimized models available through inference profiles:
 | Nemotron Super 49B v1.5 | ~30 GB | 131K | Balanced quality/speed |
 | Nemotron 3 Nano 30B | ~18 GB | 131K | Fast responses, lighter hardware |
 
-### 4.5 Ollama — The Local Model Server
+### 4.5 Local Inference Servers — Ollama + LM Studio
 
-Ollama serves as the local inference engine. It:
-- Loads models into GPU memory on demand
-- Exposes an OpenAI-compatible API on port 11434
-- Supports NVIDIA GPUs (CUDA) and Apple Silicon (Metal)
-- Can serve Nemotron models and any other GGUF/safetensors model
+The deployment runs **two** local inference servers side-by-side on both the Spark and the Mac. Each has different strengths:
+
+#### Ollama
+
+| Aspect | Detail |
+|--------|--------|
+| **Port** | 11434 |
+| **API** | OpenAI-compatible (`/v1/chat/completions`) |
+| **Strengths** | Simple CLI, fast model switching, GGUF native, keep-alive control |
+| **GPU** | CUDA (Spark), Metal (Mac) |
+| **Best for** | Primary inference, model management, quick switching |
+
+#### LM Studio (headless via `lms` / `llmster`)
+
+| Aspect | Detail |
+|--------|--------|
+| **Port** | 1234 |
+| **API** | OpenAI-compatible AND Anthropic-compatible (`/v1/chat/completions` + `/v1/messages`) |
+| **Strengths** | Dual API format, model marketplace, structured output, tool calling |
+| **GPU** | CUDA (Spark), Metal (Mac) |
+| **Install** | `curl -fsSL https://lmstudio.ai/install.sh \| bash` |
+| **CLI** | `lms server start`, `lms get <model>`, `lms load <model>` |
+| **Best for** | Anthropic-compatible agents (Claude Code can talk to it natively), experimentation, model browsing |
+
+#### Why Both?
+
+Running Ollama and LM Studio together gives you:
+- **Two independent ports** (11434 and 1234) — if one goes down, the other keeps serving
+- **Anthropic API compatibility** — LM Studio natively speaks Anthropic's `/v1/messages` format, which means Claude Code can use local models without any translation proxy
+- **More model formats** — LM Studio supports some model formats Ollama doesn't and vice versa
+- **Fallback** — register both as OpenShell providers and switch if one has issues
+
+#### Port Map (Updated)
+
+```
+DGX Spark:
+  :11434  ──  Ollama API (nemotron-3-super:120b, qwen3-coder-next)
+  :1234   ──  LM Studio API (alternative models, Anthropic-compatible)
+  :18789  ──  OpenClaw UI
+  :8080   ──  OpenShell gateway
+
+Mac Studio:
+  :11434  ──  Ollama API (qwen3:8b)
+  :1234   ──  LM Studio API (alternative fast models)
+```
+
+#### OpenShell Provider Registration (Both Servers)
+
+```bash
+# Ollama providers (existing)
+openshell provider create --name local-ollama --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
+
+# LM Studio providers (new)
+openshell provider create --name local-lmstudio --type openai \
+    --credential OPENAI_API_KEY=lm-studio \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:1234/v1
+
+# LM Studio as Anthropic-compatible provider (for Claude Code)
+openshell provider create --name local-lmstudio-anthropic --type anthropic \
+    --credential ANTHROPIC_API_KEY=lm-studio \
+    --config ANTHROPIC_BASE_URL=http://host.openshell.internal:1234
+```
 
 ### 4.6 Coding Agent CLIs — The Development Tools
 
