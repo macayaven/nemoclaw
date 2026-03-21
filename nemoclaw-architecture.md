@@ -341,6 +341,85 @@ network_policies:
 
 **MCP as the shared extensibility layer:** All four agents support MCP. This means you can create MCP servers (filesystem access, database connections, API integrations) that are shared across agents. A single MCP server for GitHub, for example, can be used by OpenClaw, Claude Code, Codex, and Gemini CLI simultaneously.
 
+### 4.7 The Orchestrator — Inter-Agent Cooperation
+
+By default, each sandbox is fully isolated — agents can't see or talk to each other. The **Orchestrator** breaks this boundary through controlled channels while preserving security.
+
+#### Architecture
+
+The orchestrator runs **outside** all sandboxes on the Spark. It acts as a manager that delegates tasks to specialist agents inside their sandboxes, collects results, and coordinates multi-step workflows.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        DGX Spark                                  │
+│                                                                   │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                    ORCHESTRATOR                             │   │
+│  │              (runs outside sandboxes)                       │   │
+│  │                                                             │   │
+│  │  ┌─────────────────────────────────────────────────────┐   │   │
+│  │  │  OpenClaw as Manager Agent                           │   │   │
+│  │  │  - Receives user requests                            │   │   │
+│  │  │  - Breaks into subtasks                              │   │   │
+│  │  │  - Delegates to specialist agents                    │   │   │
+│  │  │  - Combines results                                  │   │   │
+│  │  │  - Returns final answer to user                      │   │   │
+│  │  └────────┬──────────┬──────────┬──────────┬────────────┘   │   │
+│  │           │          │          │          │                │   │
+│  │           ▼          ▼          ▼          ▼                │   │
+│  │  ┌────────────┐ ┌────────┐ ┌────────┐ ┌────────────┐      │   │
+│  │  │  Claude    │ │ Codex  │ │Gemini  │ │  OpenClaw   │      │   │
+│  │  │  Code      │ │        │ │ CLI    │ │  (self)     │      │   │
+│  │  │  sandbox   │ │sandbox │ │sandbox │ │  sandbox    │      │   │
+│  │  │            │ │        │ │        │ │             │      │   │
+│  │  │ Specialist:│ │Special:│ │Special:│ │ Specialist: │      │   │
+│  │  │ Code review│ │Code gen│ │Research│ │ General     │      │   │
+│  │  │ Analysis   │ │Local   │ │Web     │ │ Reasoning   │      │   │
+│  │  │ Debugging  │ │Ollama  │ │Google  │ │ Local LLM   │      │   │
+│  │  └────────────┘ └────────┘ └────────┘ └─────────────┘      │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                                                                   │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                 SHARED MCP LAYER                            │   │
+│  │  (transport for inter-agent data exchange)                  │   │
+│  │                                                             │   │
+│  │  ┌──────────────┐  ┌──────────┐  ┌─────────────────────┐  │   │
+│  │  │  Filesystem   │  │  Task    │  │  Project Context    │  │   │
+│  │  │  MCP Server   │  │  Queue   │  │  MCP Server         │  │   │
+│  │  │  /shared/     │  │  MCP     │  │  (architecture,     │  │   │
+│  │  │              │  │          │  │   requirements)      │  │   │
+│  │  └──────────────┘  └──────────┘  └─────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### How It Works
+
+1. **User sends a request** to OpenClaw (via browser, app, or CLI)
+2. **The orchestrator analyzes** the request and decides which specialists are needed
+3. **It delegates subtasks** by executing commands inside sandbox containers via `openshell sandbox connect <name> -- <command>`
+4. **Specialists work** in their isolated sandboxes, reading/writing to the shared MCP filesystem
+5. **The orchestrator collects results**, combines them, and returns the final answer
+6. **All inter-agent data** flows through the shared MCP layer — agents never communicate directly
+
+#### Agent Specializations
+
+| Agent | Sandbox | Specialization | Inference | Best for |
+|-------|---------|---------------|-----------|----------|
+| **OpenClaw** | `nemoclaw-main` | General reasoning, orchestration | Local (Nemotron 120B) | Complex analysis, long context, coordination |
+| **Claude Code** | `claude-dev` | Code review, debugging, analysis | Cloud (Anthropic API) | Deep code understanding, security review |
+| **Codex** | `codex-dev` | Code generation, implementation | Local (Ollama) | Fast code writing, refactoring, tests |
+| **Gemini CLI** | `gemini-dev` | Research, web search, synthesis | Cloud (Google API) | External research, documentation, summaries |
+
+#### Security Model
+
+The orchestrator preserves all sandbox security boundaries:
+- Each agent still runs in its own isolated container
+- The orchestrator controls WHAT each agent can see (scoped prompts)
+- Inter-agent data flows through the shared MCP filesystem, not direct connections
+- Network policies remain enforced per sandbox
+- API keys remain injected by the gateway, invisible to agents
+
 ---
 
 ## 5. Your Hardware: Capabilities and Constraints

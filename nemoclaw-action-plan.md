@@ -14,9 +14,11 @@ Phase 2 ─── Mac Studio integration (companion + remote)  (~20 min)
 Phase 3 ─── Raspberry Pi infrastructure plane            (~30 min)
 Phase 4 ─── Coding agent sandboxes (Claude/Codex/Gemini)  (~30 min)
 Phase 5 ─── Mobile access + Tailscale hardening          (~10 min)
+Phase 6 ─── Orchestrator + inter-agent cooperation       (~30 min)
 ```
 
 Each phase is independently usable. Phase 1 alone gives you a working NemoClaw.
+Phases 0-5 give you isolated agents. Phase 6 makes them work together.
 
 ---
 
@@ -777,6 +779,91 @@ Configure the app:
 
 ---
 
+## Phase 6 — Orchestrator + Inter-Agent Cooperation (~30 min)
+
+> **Goal:** Enable agents to cooperate through an orchestrator that delegates tasks across sandboxes, with shared MCP filesystem for data exchange.
+> **Exit test:** `python -m orchestrator delegate --agent codex --prompt "write hello world"` returns generated code.
+
+### 6.1 Set Up Shared Workspace
+
+**Machine:** spark-caeb.local
+
+```bash
+mkdir -p ~/workspace/shared-agents/{inbox,outbox,context}
+mkdir -p ~/workspace/shared-agents/inbox/{openclaw,claude,codex,gemini}
+mkdir -p ~/workspace/shared-agents/outbox/{openclaw,claude,codex,gemini}
+```
+
+### 6.2 Install the Orchestrator
+
+```bash
+cd ~/workspace/nemoclaw
+pip install -e orchestrator/  # Or: uv pip install -e orchestrator/
+```
+
+### 6.3 Configure the Orchestrator
+
+```bash
+# The orchestrator reads config from environment or defaults
+# Defaults match the sandbox names from Phase 4:
+#   openclaw -> nemoclaw-main
+#   claude   -> claude-dev
+#   codex    -> codex-dev
+#   gemini   -> gemini-dev
+
+# Verify all sandboxes are running
+python -m orchestrator health
+```
+
+### 6.4 Test Single Delegation
+
+```bash
+# Delegate a simple task to Codex
+python -m orchestrator delegate --agent codex --prompt "Write a Python function that checks if a number is prime"
+
+# Delegate research to Gemini
+python -m orchestrator delegate --agent gemini --prompt "What are the best practices for REST API design?"
+
+# Delegate code review to Claude
+python -m orchestrator delegate --agent claude --prompt "Review this code for security issues: def login(user, pwd): return db.query(f'SELECT * FROM users WHERE name={user}')"
+```
+
+### 6.5 Test Multi-Agent Pipeline
+
+```bash
+# Research -> Implement -> Review pipeline
+python -m orchestrator pipeline \
+  --steps "gemini:research,codex:implement,claude:review" \
+  --prompt "Build a rate limiter for a FastAPI application"
+
+# The orchestrator will:
+# 1. Ask Gemini to research rate limiting patterns
+# 2. Pass the research to Codex to implement
+# 3. Pass the implementation to Claude to review
+# 4. Return the final reviewed code
+```
+
+### 6.6 Test Parallel Specialists
+
+```bash
+# Send the same prompt to multiple agents and compare
+python -m orchestrator parallel \
+  --agents "codex,claude" \
+  --prompt "Optimize this function: def fib(n): return fib(n-1) + fib(n-2) if n > 1 else n"
+
+# Both agents work in parallel, results returned side-by-side
+```
+
+### 6.7 Validate Phase 6
+
+```bash
+uv run pytest tests/phase6_orchestrator/ -v
+```
+
+**Phase 6 DONE** — Agents cooperate through the orchestrator.
+
+---
+
 ## Quick Reference
 
 ### Provider Switching
@@ -834,6 +921,13 @@ openshell policy get <name> --full      # Show sandbox policy
 openshell policy set <name> --policy f  # Update policy
 openshell logs <name>                   # View logs
 openshell doctor logs                   # Troubleshoot gateway
+
+# Orchestrator (inter-agent)
+python -m orchestrator health           # Check all sandbox health
+python -m orchestrator status           # Show task queue
+python -m orchestrator delegate ...     # Delegate task to agent
+python -m orchestrator pipeline ...     # Multi-step agent pipeline
+python -m orchestrator parallel ...     # Parallel specialist execution
 ```
 
 ### Execution Checklist
@@ -882,4 +976,13 @@ Phase 5 — Mobile + Tailscale (~10 min)
   [ ] 5.1  Tailscale gateway config                ✅ Remote access works
   [ ] 5.2  iOS app installed + connected           ✅ App shows gateway
   [ ] 5.3  End-to-end mobile test                  ✅ Chat works from phone
+
+Phase 6 — Orchestrator + Inter-Agent (~30 min)
+  [ ] 6.1  Create shared workspace directories     ✅ ls ~/workspace/shared-agents
+  [ ] 6.2  Install orchestrator module             ✅ python -m orchestrator --help
+  [ ] 6.3  Health check all sandboxes              ✅ python -m orchestrator health
+  [ ] 6.4  Test single delegation                  ✅ delegate to codex returns code
+  [ ] 6.5  Test multi-agent pipeline               ✅ research→implement→review works
+  [ ] 6.6  Test parallel specialists               ✅ parallel results from 2+ agents
+  [ ] 6.7  Validate with tests                     ✅ pytest phase6_orchestrator/ passes
 ```
