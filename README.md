@@ -284,6 +284,7 @@ OpenClaw and Codex run on **local inference** — prompts and responses never le
 | [docs/deployment-guide.md](docs/deployment-guide.md) | Full step-by-step deployment walkthrough for all 5 phases |
 | [docs/operations-guide.md](docs/operations-guide.md) | Start, stop, pause, restart, update, and monitor NemoClaw |
 | [docs/use-cases.md](docs/use-cases.md) | 10 step-by-step use case guides (chat, model switching, sandboxed agents, mobile access, API) |
+| [docs/inter-agent-guide.md](docs/inter-agent-guide.md) | Inter-agent communication, cooperation, and orchestration patterns (Shared MCP, Orchestrator, Shared FS) |
 | [nemoclaw-architecture.md](nemoclaw-architecture.md) | Three-layer architecture deep dive, sandbox internals, guardrail design |
 | [nemoclaw-action-plan.md](nemoclaw-action-plan.md) | Timed action plan with commands, verification steps, and a complete execution checklist |
 | [nemoclaw-tdd-plan.md](nemoclaw-tdd-plan.md) | TDD methodology, two-layer test design (contract vs. behavioral), tooling rationale |
