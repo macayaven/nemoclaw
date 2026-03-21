@@ -23,8 +23,8 @@ import pytest
 from fabric import Connection
 from packaging.version import Version
 
-from tests.helpers import parse_version, run_remote
-from tests.models import CommandResult, SparkPrereqs
+from ..helpers import parse_version, run_remote
+from ..models import CommandResult, SparkPrereqs
 
 # ---------------------------------------------------------------------------
 # Minimum version thresholds (defined once, referenced in tests)

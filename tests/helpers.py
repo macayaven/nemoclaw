@@ -22,7 +22,7 @@ from tenacity import retry, stop_after_delay, wait_fixed, RetryError
 if TYPE_CHECKING:
     from fabric import Connection
 
-from tests.models import CommandResult
+from .models import CommandResult
 
 
 # ---------------------------------------------------------------------------

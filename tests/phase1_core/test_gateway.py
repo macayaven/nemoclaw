@@ -18,8 +18,8 @@ import pytest
 import httpx
 from fabric import Connection
 
-from tests.models import CommandResult
-from tests.helpers import run_remote, poll_until_ready
+from ..models import CommandResult
+from ..helpers import run_remote, poll_until_ready
 
 
 # ---------------------------------------------------------------------------

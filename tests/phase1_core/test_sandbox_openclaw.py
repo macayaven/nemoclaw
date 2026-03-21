@@ -25,8 +25,8 @@ import httpx
 import pytest
 from fabric import Connection
 
-from tests.models import CommandResult, SandboxInfo, InferenceResponse
-from tests.helpers import run_remote, parse_json_output, assert_http_healthy
+from ..models import CommandResult, SandboxInfo, InferenceResponse
+from ..helpers import run_remote, parse_json_output, assert_http_healthy
 
 
 # ---------------------------------------------------------------------------

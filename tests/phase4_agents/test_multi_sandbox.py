@@ -30,8 +30,8 @@ from typing import NamedTuple
 import pytest
 from fabric import Connection
 
-from tests.helpers import generate_unique_id, run_remote
-from tests.models import CommandResult
+from ..helpers import generate_unique_id, run_remote
+from ..models import CommandResult
 
 # ---------------------------------------------------------------------------
 # Constants

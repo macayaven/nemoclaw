@@ -26,8 +26,8 @@ from __future__ import annotations
 import pytest
 from fabric import Connection
 
-from tests.helpers import run_remote
-from tests.models import CommandResult
+from ..helpers import run_remote
+from ..models import CommandResult
 
 # ---------------------------------------------------------------------------
 # Constants

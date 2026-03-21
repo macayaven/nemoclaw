@@ -24,8 +24,8 @@ import uuid
 import pytest
 from fabric import Connection
 
-from tests.models import CommandResult, OpenShellInferenceRoute, InferenceResponse
-from tests.helpers import run_remote, parse_json_output
+from ..models import CommandResult, OpenShellInferenceRoute, InferenceResponse
+from ..helpers import run_remote, parse_json_output
 
 
 # ---------------------------------------------------------------------------

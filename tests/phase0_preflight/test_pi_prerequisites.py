@@ -33,8 +33,8 @@ import pytest
 from fabric import Connection
 from packaging.version import Version
 
-from tests.helpers import parse_version, run_remote
-from tests.models import CommandResult, PiPrereqs
+from ..helpers import parse_version, run_remote
+from ..models import CommandResult, PiPrereqs
 
 # ---------------------------------------------------------------------------
 # Minimum resource thresholds

@@ -33,9 +33,9 @@ from typing import Any
 import pytest
 from fabric import Connection
 
-from tests.helpers import run_remote, parse_json_output
-from tests.models import CommandResult
-from tests.settings import TestSettings
+from ..helpers import run_remote, parse_json_output
+from ..models import CommandResult
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants

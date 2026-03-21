@@ -18,8 +18,8 @@ import pytest
 import httpx
 from fabric import Connection
 
-from tests.models import CommandResult, OllamaTagsResponse
-from tests.helpers import run_remote, assert_http_healthy, assert_json_schema, parse_json_output
+from ..models import CommandResult, OllamaTagsResponse
+from ..helpers import run_remote, assert_http_healthy, assert_json_schema, parse_json_output
 
 
 # ---------------------------------------------------------------------------

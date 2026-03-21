@@ -35,8 +35,8 @@ import uuid
 import pytest
 from fabric import Connection
 
-from tests.helpers import parse_json_output, run_remote
-from tests.models import CommandResult, OpenShellProvider
+from ..helpers import parse_json_output, run_remote
+from ..models import CommandResult, OpenShellProvider
 
 
 # ---------------------------------------------------------------------------

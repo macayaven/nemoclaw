@@ -35,8 +35,8 @@ from __future__ import annotations
 import pytest
 from fabric import Connection
 
-from tests.helpers import assert_http_healthy, assert_json_schema, run_remote
-from tests.models import CommandResult, MacPrereqs, OllamaTagsResponse
+from ..helpers import assert_http_healthy, assert_json_schema, run_remote
+from ..models import CommandResult, MacPrereqs, OllamaTagsResponse
 
 
 # ---------------------------------------------------------------------------

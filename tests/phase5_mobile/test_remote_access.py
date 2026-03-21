@@ -33,9 +33,9 @@ import re
 import pytest
 from fabric import Connection
 
-from tests.helpers import run_remote
-from tests.models import CommandResult
-from tests.settings import TestSettings
+from ..helpers import run_remote
+from ..models import CommandResult
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants

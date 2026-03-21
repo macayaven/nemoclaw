@@ -27,7 +27,7 @@ import os
 import pytest
 import httpx
 
-from tests.settings import TestSettings
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants

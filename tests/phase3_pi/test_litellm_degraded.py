@@ -32,7 +32,7 @@ from __future__ import annotations
 import pytest
 import httpx
 
-from tests.settings import TestSettings
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Module-level constants

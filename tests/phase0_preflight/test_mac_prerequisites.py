@@ -31,8 +31,8 @@ import pytest
 from fabric import Connection
 from packaging.version import Version
 
-from tests.helpers import parse_version, run_remote
-from tests.models import CommandResult, MacPrereqs
+from ..helpers import parse_version, run_remote
+from ..models import CommandResult, MacPrereqs
 
 # ---------------------------------------------------------------------------
 # Minimum version thresholds

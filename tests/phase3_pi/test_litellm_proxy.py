@@ -18,9 +18,9 @@ from __future__ import annotations
 import pytest
 import httpx
 
-from tests.helpers import assert_http_healthy, assert_json_schema
-from tests.models import InferenceResponse, LiteLLMModelEntry, LiteLLMModelsResponse
-from tests.settings import TestSettings
+from ..helpers import assert_http_healthy, assert_json_schema
+from ..models import InferenceResponse, LiteLLMModelEntry, LiteLLMModelsResponse
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Module-level constants

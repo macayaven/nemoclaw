@@ -16,10 +16,6 @@ dependencies = [
     "tenacity>=9.0",
     "packaging>=24.0",
     "python-dotenv>=1.0",
-]
-
-[project.optional-dependencies]
-dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "isort>=5.13",

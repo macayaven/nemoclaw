@@ -6,62 +6,66 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v5
 
       - name: Sync dependencies
         run: uv sync
-        working-directory: tests
 
       - name: Lint (ruff)
-        run: uv run ruff check tests/
-        working-directory: tests
+        run: uv run ruff check .
 
       - name: Format check (ruff)
-        run: uv run ruff format --check tests/
-        working-directory: tests
+        run: uv run ruff format --check .
 
       - name: Import sorting (isort)
-        run: uv run isort --check-only tests/
-        working-directory: tests
+        run: uv run isort --check-only .
 
   typecheck:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v5
 
       - name: Sync dependencies
         run: uv sync
-        working-directory: tests
 
       - name: Type check (mypy)
-        run: uv run mypy tests/ --ignore-missing-imports
-        working-directory: tests
+        run: uv run mypy . --ignore-missing-imports
 
   docstrings:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v5
 
       - name: Sync dependencies
         run: uv sync
-        working-directory: tests
 
       - name: Docstring check (pydocstyle)
-        run: uv run pydocstyle tests/ --convention=google --add-ignore=D100,D104
-        working-directory: tests
+        run: uv run pydocstyle . --convention=google --add-ignore=D100,D104
 
   syntax:
     runs-on: ubuntu-latest
@@ -69,20 +73,36 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Syntax validation
-        run: python -c "import ast; import glob; [ast.parse(open(f).read()) for f in glob.glob('tests/**/*.py', recursive=True)]"
+        run: |
+          python3 -c "
+          import ast, glob, sys
+          errors = []
+          for f in glob.glob('tests/**/*.py', recursive=True):
+              try:
+                  with open(f) as fh:
+                      ast.parse(fh.read())
+              except SyntaxError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              for e in errors: print(e, file=sys.stderr)
+              sys.exit(1)
+          else:
+              print(f'All {len(glob.glob(\"tests/**/*.py\", recursive=True))} Python files OK')
+          "
 
   test-collection:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v5
 
       - name: Sync dependencies
         run: uv sync
-        working-directory: tests
 
       - name: Test collection (pytest --collect-only)
-        run: uv run pytest tests/ --collect-only -q
-        working-directory: tests
+        run: uv run pytest --collect-only -q

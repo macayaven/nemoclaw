@@ -15,9 +15,9 @@ import pytest
 from fabric import Connection
 from invoke import UnexpectedExit
 
-from tests.helpers import run_remote
-from tests.models import CommandResult, MacPrereqs, PiPrereqs, SparkPrereqs
-from tests.settings import TestSettings
+from .helpers import run_remote
+from .models import CommandResult, MacPrereqs, PiPrereqs, SparkPrereqs
+from .settings import TestSettings
 
 
 # ---------------------------------------------------------------------------
