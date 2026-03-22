@@ -560,12 +560,36 @@ The port forward is fragile — it uses an SSH tunnel that can drop. After any S
 
 **Approve pairing on the gateway** (first-time only):
 
-After the node host connects, it needs approval on the Spark side:
+The node host creates a device pairing request when it first connects. You must approve it on the gateway side. Note: the node host will disconnect with "pairing required" and you must restart it AFTER approval.
+
 ```bash
 # On the Spark, inside the sandbox:
 openshell sandbox connect nemoclaw-main
-openclaw nodes list   # Should show "Pending: 1"
-openclaw nodes approve --all
+openclaw devices list   # Should show "Pending: 1" with "Mac Studio"
+openclaw devices approve <request-id>   # Use the Request ID from the list
+```
+
+**Important:** Use `openclaw devices list/approve`, NOT `openclaw nodes list/approve`. The `devices` command handles pairing; `nodes` shows already-paired nodes.
+
+After approval, restart the node host on the Mac — it should now connect without "pairing required".
+
+**Make it persistent with token auth:**
+
+The launchd plist needs `OPENCLAW_GATEWAY_TOKEN` to authenticate. Add it with:
+```bash
+# On the Mac:
+python3 -c "
+import plistlib
+plist_path = '$HOME/Library/LaunchAgents/ai.openclaw.node.plist'
+with open(plist_path, 'rb') as f:
+    plist = plistlib.load(f)
+plist.setdefault('EnvironmentVariables', {})['OPENCLAW_GATEWAY_TOKEN'] = '<your-gateway-token>'
+with open(plist_path, 'wb') as f:
+    plistlib.dump(plist, f)
+"
+# Reload the service
+launchctl bootout gui/$(id -u)/ai.openclaw.node 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.node.plist
 ```
 
 #### Step 2.5: Install OpenClaw.app (Mac Companion)
@@ -2077,13 +2101,16 @@ df -h /
 du -sh ~/.ollama/models/
 uv run pytest ~/workspace/nemoclaw/tests/ -v             # Full validation
 
-# Mac companion
-openclaw node install --host <gw> --port 443 --tls --display-name "Mac Studio"
-openclaw node status                     # Check node host
+# Mac companion (run on Mac)
+openclaw node install --host spark-caeb.tail48bab7.ts.net --port 443 --tls --display-name "Mac Studio"
+openclaw node status                     # Check node host service
 openclaw node stop                       # Stop node host
-openclaw node run --host <gw> ...        # Run in foreground (debug)
-openclaw nodes list                      # List connected nodes (gateway side)
-openclaw nodes approve --all             # Approve pending nodes
+OPENCLAW_GATEWAY_TOKEN=<token> openclaw node run --host spark-caeb.tail48bab7.ts.net --port 443 --tls  # Debug mode
+
+# Mac companion (run on Spark, inside sandbox)
+openclaw devices list                    # List pending + paired devices
+openclaw devices approve <request-id>    # Approve a pending node
+openclaw nodes status                    # List paired nodes with connection status
 ```
 
 ### Inference Provider Reference
