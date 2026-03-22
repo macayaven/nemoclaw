@@ -67,7 +67,7 @@ class SandboxResult(BaseModel):
 _AGENT_CMD_TEMPLATES: dict[str, str] = {
     "openclaw": 'openclaw agent --agent main --local -m {prompt} --session-id orchestrator',
     "claude": 'claude -p {prompt} --output-format text',
-    "codex": 'codex exec {prompt}',
+    "codex": 'source ~/.bashrc && cd /sandbox && codex exec {prompt}',
     "gemini": 'gemini -p {prompt}',
 }
 
@@ -122,12 +122,15 @@ class SandboxBridge:
         """
         effective_timeout = timeout if timeout is not None else self.settings.sandbox_timeout
 
+        # openshell sandbox connect doesn't accept trailing commands.
+        # Use SSH with the openshell ssh-proxy as ProxyCommand instead.
         outer_cmd: list[str] = [
-            "openshell",
-            "sandbox",
-            "connect",
-            sandbox_name,
-            "--",
+            "ssh",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-o", f"ProxyCommand=openshell ssh-proxy --gateway-name openshell --name {sandbox_name}",
+            f"sandbox@openshell-{sandbox_name}",
             command,
         ]
 
