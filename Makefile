@@ -79,8 +79,20 @@ start-openclaw: ## Start OpenClaw gateway inside sandbox
 		(openclaw gateway run > /tmp/gateway.log 2>&1 & echo "OpenClaw gateway started")'
 
 .PHONY: start-lmstudio
-start-lmstudio: ## Start LM Studio on Spark
+start-lmstudio: ## Start LM Studio on Spark (:1234)
 	@lms server start --port 1234 --bind 0.0.0.0 --cors 2>/dev/null || echo "LM Studio may already be running"
+
+.PHONY: stop-lmstudio
+stop-lmstudio: ## Stop LM Studio on Spark
+	@lms server stop 2>/dev/null && echo "LM Studio stopped" || echo "LM Studio was not running"
+
+.PHONY: mac-start-lmstudio
+mac-start-lmstudio: ## Start LM Studio on Mac (opens the app)
+	@$(MAC) 'open -a "LM Studio"' 2>/dev/null && echo "LM Studio started on Mac"
+
+.PHONY: mac-stop-lmstudio
+mac-stop-lmstudio: ## Stop LM Studio on Mac
+	@$(MAC) 'pkill -f "LM Studio"' 2>/dev/null && echo "LM Studio stopped on Mac" || echo "Not running"
 
 .PHONY: stop
 stop: ## Stop gateway (sandboxes freeze, restore on next start)
