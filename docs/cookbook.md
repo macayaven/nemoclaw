@@ -1488,6 +1488,271 @@ openshell sandbox connect gemini-dev   # → browser login for Google
 
 ---
 
+## Category 12: Raspberry Pi Components
+
+### Recipe 35: Access and Use LiteLLM (Unified API Gateway)
+
+**What it is:** A proxy that presents a single OpenAI-compatible endpoint. You specify which model you want, and LiteLLM routes to the right machine.
+
+**Why:** Without LiteLLM, you need to know which machine has which model and hit the right IP/port. With it, you hit one endpoint and specify the model name.
+
+**Access:** `http://100.85.6.21:4000/v1`
+
+**Usage:**
+```bash
+# List all models available across all machines
+curl http://100.85.6.21:4000/v1/models
+
+# Chat with Nemotron 120B (routed to Spark automatically)
+curl http://100.85.6.21:4000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"nemotron-3-super:120b","messages":[{"role":"user","content":"hello"}]}'
+
+# Chat with qwen3:8b (routed to Mac automatically)
+curl http://100.85.6.21:4000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"qwen3:8b","messages":[{"role":"user","content":"hello"}]}'
+
+# Use from Python (any machine on the network)
+from openai import OpenAI
+client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="nemotron-3-super:120b",
+    messages=[{"role": "user", "content": "Explain transformers"}],
+)
+print(response.choices[0].message.content)
+```
+
+**Verify:** `curl http://100.85.6.21:4000/health`
+
+### Recipe 36: Access and Use Pi-hole (DNS + Ad Blocking)
+
+**What it is:** A DNS server that resolves custom hostnames (`spark.lab`, `mac.lab`, `ai.lab`) and blocks ads/trackers network-wide.
+
+**Why:** Type `spark.lab` instead of `100.93.220.104`. Plus your whole network gets ad blocking for free.
+
+**Access:** `http://100.85.6.21/admin` (web dashboard)
+
+**Setup your devices to use Pi-hole DNS:**
+1. Set your router's DNS to `100.85.6.21` (affects all devices), or
+2. Set individual device DNS to `100.85.6.21`
+
+**Add a custom DNS entry:**
+1. Open `http://100.85.6.21/admin`
+2. Login (password set during Pi-hole install)
+3. Go to Local DNS → DNS Records
+4. Add: `spark.lab` → `100.93.220.104`
+5. Add: `mac.lab` → `100.116.228.36`
+6. Add: `ai.lab` → `100.85.6.21`
+
+**Verify:** `nslookup spark.lab 100.85.6.21`
+
+### Recipe 37: Access and Use Uptime Kuma (Monitoring)
+
+**What it is:** A dashboard that checks if all your services are running and alerts you when something goes down.
+
+**Why:** You want to know immediately if Ollama crashes, the gateway dies, or the port forward drops — not find out when you try to chat.
+
+**Access:** `http://100.85.6.21:3001`
+
+**Monitors to set up:**
+1. Open `http://100.85.6.21:3001` and create an account
+2. Add monitors:
+
+| Monitor | Type | URL/Host | Interval |
+|---------|------|----------|----------|
+| Spark Ollama | HTTP | `http://100.93.220.104:11434/` | 60s |
+| Spark LM Studio | HTTP | `http://100.93.220.104:1234/v1/models` | 60s |
+| NemoClaw UI | HTTP | `http://100.93.220.104:18789/` | 60s |
+| Mac Ollama | TCP | `100.116.228.36:11435` | 60s |
+| LiteLLM | HTTP | `http://100.85.6.21:4000/health` | 60s |
+
+3. Configure alerts: Settings → Notifications → add Telegram/email/webhook
+
+**Verify:** Dashboard shows green for all monitors.
+
+---
+
+## Category 13: Channels (Chat from Anywhere)
+
+### Recipe 38: Add a Telegram Channel and Chat with Your Agent
+
+**What channels are:** Channels let you message your NemoClaw agent from apps you already use — Telegram, Discord, WhatsApp, Slack, etc. The agent responds using whatever model is active (Nemotron, Claude, etc.).
+
+**Why:** Instead of opening the browser dashboard every time, you just message your Telegram bot from your phone. The agent has full context, skills, and model access.
+
+**Step-by-step: Telegram bot**
+
+1. **Create a bot on Telegram:**
+   - Open Telegram, search for `@BotFather`
+   - Send `/newbot`
+   - Choose a name (e.g., "NemoClaw")
+   - Choose a username (e.g., `nemoclaw_spark_bot`)
+   - BotFather gives you a token like `7123456789:AAH...`
+   - Save this token
+
+2. **Configure OpenClaw (inside sandbox):**
+```bash
+openshell sandbox connect nemoclaw-main
+
+# Add the Telegram channel
+openclaw channels add telegram --token 7123456789:AAHxxxxxxxxx
+
+# Verify
+openclaw channels list
+# Should show: telegram | Configured: Yes | Running: Yes
+```
+
+3. **Start chatting:**
+   - Open Telegram on your phone
+   - Find your bot (`@nemoclaw_spark_bot`)
+   - Send a message: "What model are you?"
+   - The agent responds using Nemotron 120B (or whatever model is active)
+
+4. **Pairing (first time):**
+   - The bot may send you a pairing code
+   - Inside the sandbox: `openclaw pairing approve <code>`
+   - After approval, DMs work without codes
+
+**What you can do through Telegram:**
+- Chat with the agent (same as browser dashboard)
+- Send images for analysis (if vision model configured)
+- Receive notifications from cron jobs
+- Run skills and tools (agent has same capabilities as in browser)
+
+**Verify:**
+```bash
+openclaw status
+# Channels section should show telegram as Running
+```
+
+### Recipe 38b: Add a Discord Channel
+
+```bash
+# 1. Create a bot at https://discord.com/developers/applications
+# 2. Get the bot token
+# 3. Invite the bot to your server with message permissions
+
+openshell sandbox connect nemoclaw-main
+openclaw channels add discord --token YOUR_DISCORD_BOT_TOKEN
+
+# The bot appears in your Discord server
+# Mention it or DM it to chat with the agent
+```
+
+### Recipe 38c: What Channels Are NOT For
+
+Channels are for **you** to reach the agent. They are NOT for:
+- Agent-to-agent communication (use the Orchestrator for that)
+- Connecting two NemoClaw instances together
+- Exposing the agent as a public API (use LiteLLM for that)
+
+---
+
+## Category 14: IDE Integration (Local Coding Assistant)
+
+Use your NemoClaw models as a coding assistant in any IDE — all inference stays local on the Spark.
+
+### Recipe 39: VS Code + Continue.dev
+
+**What:** Continue.dev is an open-source AI coding assistant extension. Point it at your Spark's Ollama and it uses Nemotron 120B for completions, chat, and code editing.
+
+**Install:**
+1. Open VS Code
+2. Install the "Continue" extension from the marketplace
+3. Open Continue settings (`~/.continue/config.yaml` or via the extension)
+
+**Configure:**
+```yaml
+# ~/.continue/config.yaml
+models:
+  - title: "Nemotron 120B (Local Spark)"
+    provider: ollama
+    model: nemotron-3-super:120b
+    apiBase: http://100.93.220.104:11434
+
+  - title: "Qwen3 8B (Local Mac)"
+    provider: ollama
+    model: qwen3:8b
+    apiBase: http://100.116.228.36:11435
+
+  - title: "Qwen Coder (Local Spark)"
+    provider: ollama
+    model: qwen3-coder-next:q4_K_M
+    apiBase: http://100.93.220.104:11434
+
+  # Or use LiteLLM for automatic routing:
+  - title: "NemoClaw (via LiteLLM)"
+    provider: openai
+    model: nemotron-3-super:120b
+    apiBase: http://100.85.6.21:4000/v1
+    apiKey: unused
+```
+
+**Usage:** Open Continue sidebar → select model → ask questions or highlight code and press Ctrl+L.
+
+**Verify:** Type a question in the Continue chat → response should come from Nemotron.
+
+### Recipe 40: Cursor IDE
+
+**What:** Cursor already has built-in Ollama support. Your Mac's Cursor is already connected to Ollama on port 11434.
+
+**To also use the Spark's models:**
+1. Open Cursor Settings → Models
+2. Add a custom OpenAI-compatible model:
+   - Name: `Nemotron 120B`
+   - API Base: `http://100.93.220.104:11434/v1`
+   - API Key: `ollama`
+   - Model: `nemotron-3-super:120b`
+
+**Or use LiteLLM for unified access:**
+   - API Base: `http://100.85.6.21:4000/v1`
+   - API Key: `unused`
+   - Model: any model name that LiteLLM knows
+
+### Recipe 41: Any IDE with OpenAI-Compatible Settings
+
+**What:** Any tool that supports a "custom OpenAI endpoint" can use your NemoClaw models.
+
+**The universal endpoint:** `http://100.85.6.21:4000/v1` (LiteLLM on Pi)
+
+**Configuration for any tool:**
+```
+API Base URL: http://100.85.6.21:4000/v1
+API Key: unused (or any string)
+Model: nemotron-3-super:120b  (or qwen3:8b, qwen3-coder-next:q4_K_M)
+```
+
+**Tools that work with this:**
+- Continue.dev (VS Code)
+- Cursor
+- Cody (VS Code)
+- Aider (terminal)
+- Open Interpreter (terminal)
+- GitHub Copilot (with custom endpoint config)
+- LM Studio (as client, not server)
+- Any OpenAI Python/JS client
+
+**Python example:**
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+
+# Code completion
+response = client.chat.completions.create(
+    model="qwen3-coder-next:q4_K_M",
+    messages=[{
+        "role": "user",
+        "content": "Write a Python function to parse CSV files with error handling"
+    }],
+)
+print(response.choices[0].message.content)
+```
+
+**Why LiteLLM is the best endpoint for IDEs:** You configure one URL and switch models by name. When you want Nemotron for complex reasoning, use `nemotron-3-super:120b`. For fast completions, use `qwen3:8b`. No URL changes needed.
+
+---
+
 ## Quick Reference
 
 | I want to... | Recipe | Key command |
@@ -1528,3 +1793,11 @@ openshell sandbox connect gemini-dev   # → browser login for Google
 | Switch main agent to Gemini (subscription) | 32 | `openclaw configure --section model` → Google → browser login |
 | Understand subscription vs API key auth | 33 | See Recipe 33 comparison table |
 | Use cloud provider without API key | 34 | `openclaw configure --section model` inside sandbox (not `openshell provider`) |
+| Access Pi LiteLLM API | 35 | `curl http://100.85.6.21:4000/v1/chat/completions -d '{"model":"..."}' ` |
+| Access Pi-hole DNS admin | 36 | Open `http://100.85.6.21/admin` in browser |
+| Access Uptime Kuma dashboard | 37 | Open `http://100.85.6.21:3001` in browser |
+| Add a Telegram channel | 38 | `openclaw channels add telegram --token <BOT_TOKEN>` inside sandbox |
+| Chat with agent from Telegram | 38 | Message your bot → agent responds using Nemotron |
+| Use NemoClaw as VS Code coding assistant | 39 | Continue.dev extension → set endpoint to `http://100.93.220.104:11434/v1` |
+| Use NemoClaw as Cursor coding assistant | 40 | Cursor Settings → Models → add Ollama at `http://100.93.220.104:11434` |
+| Use any IDE with LiteLLM | 41 | Set OpenAI base URL to `http://100.85.6.21:4000/v1` in any IDE |
