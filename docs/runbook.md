@@ -492,7 +492,83 @@ openshell inference set --provider local-ollama --model nemotron-3-super:120b
 
 Switching takes ~5 seconds. No sandbox restart needed.
 
-#### Step 2.4: Install OpenClaw.app (Mac Companion)
+#### Step 2.4: Install OpenClaw Companion on Mac
+
+OpenClaw provides a headless "node host" service that runs on the Mac and connects to the Spark gateway. It exposes Mac capabilities (screen, camera, AppleScript, notifications) to the NemoClaw agent.
+
+**Install OpenClaw CLI** (already installed if npm-global is set up):
+
+```bash
+export PATH="$HOME/.npm-global/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"
+openclaw --version
+# Expected: OpenClaw 2026.3.13
+```
+
+If not installed:
+```bash
+npm install -g openclaw
+```
+
+**Get the gateway token from the Spark:**
+
+On the Spark, run:
+```bash
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    -o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name nemoclaw-main" \
+    sandbox@openshell-nemoclaw-main \
+    "python3 -c \"import json; gw=json.load(open('/sandbox/.openclaw/openclaw.json')).get('gateway',{}); print(gw.get('auth',{}).get('token','NOT FOUND'))\""
+```
+
+Save the token — you'll need it for the Mac connection.
+
+**Install the node host service on the Mac:**
+
+```bash
+# On the Mac:
+export PATH="$HOME/.npm-global/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"
+
+openclaw node install \
+    --host spark-caeb.tail48bab7.ts.net \
+    --port 443 \
+    --tls \
+    --force \
+    --display-name "Mac Studio"
+```
+
+This creates a launchd service (`ai.openclaw.node`) that auto-starts on boot and connects to the Spark gateway via Tailscale Serve.
+
+**Verify:**
+```bash
+openclaw node status
+# Expected: Runtime: running (pid XXXX, state active)
+```
+
+**Test in foreground (for debugging):**
+```bash
+openclaw node stop
+openclaw node run --host spark-caeb.tail48bab7.ts.net --port 443 --tls --display-name "Mac Studio"
+```
+
+**Gotcha: 502 errors from the node host** mean the Tailscale Serve proxy can't reach `127.0.0.1:18789` on the Spark. This happens when the OpenShell port forward dies. Fix on the Spark:
+```bash
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+openshell forward start 18789 nemoclaw-main --background
+```
+
+The port forward is fragile — it uses an SSH tunnel that can drop. After any Spark reboot or gateway restart, re-run the forward command.
+
+**Approve pairing on the gateway** (first-time only):
+
+After the node host connects, it needs approval on the Spark side:
+```bash
+# On the Spark, inside the sandbox:
+openshell sandbox connect nemoclaw-main
+openclaw nodes list   # Should show "Pending: 1"
+openclaw nodes approve --all
+```
+
+#### Step 2.5: Install OpenClaw.app (Mac Companion)
 
 OpenClaw.app is a native macOS menu-bar companion that connects to the NemoClaw gateway on the Spark via WebSocket. It gives you:
 
@@ -1321,6 +1397,28 @@ openshell policy get claude-dev --full > /tmp/claude-policy.yaml
 openshell policy set claude-dev --policy /tmp/claude-policy.yaml --wait
 ```
 
+### Port forward fragility
+
+The `openshell forward` command creates an SSH tunnel from `127.0.0.1:18789` on the Spark host to port 18789 inside the sandbox. This tunnel can die silently — when it does, Tailscale Serve returns 502, the browser shows nothing, and the Mac node host can't connect.
+
+**Diagnosis:**
+```bash
+ss -tlnp | grep 18789
+# If empty: port forward is dead
+```
+
+**Fix:**
+```bash
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+openshell forward start 18789 nemoclaw-main --background
+```
+
+**Prevention:** Add a cron job or systemd timer to check and restart the forward:
+```bash
+# Check every 5 minutes
+*/5 * * * * ss -tlnp | grep -q 18789 || (source ~/workspace/nemoclaw/openshell-env/bin/activate && openshell forward start 18789 nemoclaw-main --background)
+```
+
 ---
 
 ## 7. Tools Available
@@ -1934,6 +2032,8 @@ http://100.85.6.21:3001
 | Pi-hole Admin | `http://100.85.6.21/admin` |
 | Ollama (Spark, direct) | `http://100.93.220.104:11434` |
 | Ollama (Mac, via forwarder) | `http://100.116.228.36:11435` |
+| Mac Node Host | `openclaw node status` | Companion service on Mac |
+| OpenClaw.app Token | `grep token ~/.openclaw/openclaw.json` (inside sandbox) | Gateway auth token |
 
 ### Most Common Commands
 
@@ -1976,6 +2076,14 @@ curl http://100.85.6.21:4000/v1/models
 df -h /
 du -sh ~/.ollama/models/
 uv run pytest ~/workspace/nemoclaw/tests/ -v             # Full validation
+
+# Mac companion
+openclaw node install --host <gw> --port 443 --tls --display-name "Mac Studio"
+openclaw node status                     # Check node host
+openclaw node stop                       # Stop node host
+openclaw node run --host <gw> ...        # Run in foreground (debug)
+openclaw nodes list                      # List connected nodes (gateway side)
+openclaw nodes approve --all             # Approve pending nodes
 ```
 
 ### Inference Provider Reference
