@@ -431,24 +431,48 @@ python3 --version          # 3.x for LiteLLM
 free -h                    # ~2.2 GB available — LiteLLM runs fine at ~300 MB
 ```
 
-**OpenShell installed on Spark**
+**Docker cgroup v2 fix (CRITICAL — from official NemoClaw guide)**
+
+DGX Spark runs Ubuntu 24.04 with cgroup v2. The k3s cluster inside OpenShell requires `cgroupns=host` mode, otherwise it fails with "Failed to start ContainerManager."
 
 ```bash
-# OpenShell should already be in a venv:
-ls ~/workspace/nemoclaw/openshell-env/bin/openshell
-# If not, install:
+# Check if the fix is applied:
+cat /etc/docker/daemon.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('default-cgroupns-mode', 'NOT SET'))"
+# Must show: host
+
+# If NOT SET, apply the fix:
+sudo python3 -c "
+import json, os
+path = '/etc/docker/daemon.json'
+d = json.load(open(path)) if os.path.exists(path) else {}
+d['default-cgroupns-mode'] = 'host'
+json.dump(d, open(path, 'w'), indent=2)
+"
+sudo systemctl restart docker
+```
+
+This is the same fix that `nemoclaw setup-spark` applies automatically.
+
+**Install NemoClaw + OpenShell (official method)**
+
+```bash
+# Option A: Official installer (recommended)
+git clone https://github.com/NVIDIA/NemoClaw.git ~/NemoClaw
+cd ~/NemoClaw
+sudo npm install -g .
+nemoclaw setup-spark   # Applies cgroup fix + Docker permissions + onboarding
+
+# Option B: Manual install (what our deployment uses)
+# OpenShell in a venv:
 python3 -m venv ~/workspace/nemoclaw/openshell-env
 source ~/workspace/nemoclaw/openshell-env/bin/activate
 pip install openshell
-```
 
-**NemoClaw CLI installed on Spark**
-
-```bash
-nemoclaw --version
-# If not installed:
+# NemoClaw CLI globally:
 npm install -g nemoclaw
 ```
+
+**Note:** Our deployment uses Option B (manual). Both methods produce the same result. The official `nemoclaw setup-spark` command bundles the cgroup fix, Docker group setup, and onboarding wizard into one step.
 
 ---
 
