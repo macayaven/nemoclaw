@@ -1123,10 +1123,14 @@ curl -s http://localhost:11434/v1/chat/completions \
 
 ### Resume After Reboot
 
+**BOOT ORDER MATTERS.** Components must start in the right sequence or they will conflict, hang, or bind to wrong ports.
+
+#### DGX Spark Boot Order
+
 After a full Spark reboot, Ollama starts automatically (it is a systemd service). The OpenShell gateway does NOT auto-start — it must be started manually:
 
 ```bash
-# Step 1: Verify Ollama is running
+# Step 1: Verify Ollama is running (auto-starts via systemd)
 systemctl status ollama
 ss -tlnp | grep 11434
 
@@ -1143,7 +1147,103 @@ openshell status
 openshell sandbox list
 # All four sandboxes should show Ready
 
-# Step 5: Restart Mac TCP forwarder (does not survive reboots)
+# Step 5: Restart the port forward (dies on every reboot)
+openshell forward start 18789 nemoclaw-main --background
+
+# Step 6: Start the OpenClaw gateway inside the sandbox
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    -o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name nemoclaw-main" \
+    sandbox@openshell-nemoclaw-main \
+    'openclaw gateway run > /tmp/gateway.log 2>&1 &'
+```
+
+#### Mac Studio Boot Order (CRITICAL)
+
+The order on the Mac is critical because Cursor and Ollama.app both want port 11434. Whichever starts first gets it. If Cursor starts first, Ollama.app can't bind and freezes on "Loading...".
+
+```bash
+# CORRECT ORDER: Ollama FIRST, then Cursor
+# Step 1: Start Ollama.app FIRST (grabs port 11434)
+open -a Ollama
+sleep 5
+
+# Step 2: THEN start Cursor (connects to Ollama as a client)
+open -a Cursor
+
+# Step 3: Verify Ollama has port 11434
+lsof -iTCP:11434 -sTCP:LISTEN -nP
+# Should show "ollama" not "Cursor"
+
+# Step 4: Start the TCP forwarder to expose on the network
+python3 -c "
+import socket, threading
+def forward(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data: break
+            dst.sendall(data)
+    except: pass
+    src.close(); dst.close()
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('0.0.0.0', 11435))
+server.listen(50)
+while True:
+    client, _ = server.accept()
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    upstream.connect(('127.0.0.1', 11434))
+    threading.Thread(target=forward, args=(client, upstream), daemon=True).start()
+    threading.Thread(target=forward, args=(upstream, client), daemon=True).start()
+" &
+
+# Step 5: Verify from Spark
+# curl http://100.116.228.36:11435/api/tags
+```
+
+**WRONG ORDER:** If Cursor starts first:
+- Cursor's embedded Ollama grabs port 11434 (localhost only)
+- Ollama.app starts, can't bind 11434, falls back to random port
+- Ollama.app GUI shows "Loading..." and freezes
+- TCP forwarder connects to Cursor's Ollama (which may not have all models)
+
+**FIX if wrong order happened:**
+```bash
+# Kill both, restart in correct order
+pkill -f Cursor
+pkill -f Ollama
+sleep 3
+open -a Ollama    # FIRST
+sleep 5
+open -a Cursor    # SECOND
+```
+
+#### Raspberry Pi Boot Order
+
+No special order needed — all Pi services are systemd and auto-start independently:
+
+```bash
+# Verify after reboot
+ssh carlos@100.85.6.21 '
+  systemctl status litellm
+  systemctl status pihole-FTL
+  tailscale status | head -3
+'
+```
+
+#### Full System Boot Sequence (all machines)
+
+```
+1. Spark: Ollama (auto) → LM Studio → OpenShell gateway → port forward → OpenClaw gateway
+2. Mac:   Ollama.app FIRST → Cursor SECOND → TCP forwarder → node host (auto via launchd)
+3. Pi:    All auto (LiteLLM, Pi-hole, Uptime Kuma, Tailscale)
+```
+
+### Restart Mac TCP Forwarder
+
+The TCP forwarder does not survive Mac reboots. Restart it after each reboot:
+
+```bash
 ssh carlos@100.116.228.36
 python3 -c "
 import socket, threading
@@ -1481,6 +1581,20 @@ openshell policy get claude-dev --full > /tmp/claude-policy.yaml
 # Edit /tmp/claude-policy.yaml to add the endpoint
 openshell policy set claude-dev --policy /tmp/claude-policy.yaml --wait
 ```
+
+### Mac Studio boot order (Ollama vs Cursor)
+
+Ollama.app and Cursor both want port 11434. **Ollama.app must start BEFORE Cursor.** If Cursor starts first, its embedded Ollama grabs port 11434 (localhost only), and Ollama.app falls back to a random port and freezes on "Loading...".
+
+**Symptoms:** Ollama.app GUI stuck on "Loading...", models won't load, API requests timeout.
+
+**Fix:**
+```bash
+pkill -f Cursor && pkill -f Ollama && sleep 3
+open -a Ollama && sleep 5 && open -a Cursor
+```
+
+**Prevention:** If using launchd for Ollama, ensure it runs at login BEFORE Cursor by setting a lower `Nice` value or using `RunAtLoad` with a pre-login trigger.
 
 ### Port forward fragility
 
