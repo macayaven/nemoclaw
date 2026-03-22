@@ -2382,7 +2382,234 @@ http://100.85.6.21:3001
 
 ---
 
-## 9. Future Improvements
+## 9. Updating Components
+
+How to update each component without breaking the running system. The golden rule: **update one thing at a time, verify it works, then move to the next.**
+
+### Pre-Update Checklist
+
+```bash
+# 1. Save current state so you can roll back
+make status > /tmp/nemoclaw-state-before-update.txt
+
+# 2. Note current versions
+ollama --version
+lms --version 2>/dev/null
+openshell --version
+openclaw --version 2>/dev/null  # inside sandbox
+nemoclaw --version 2>/dev/null
+```
+
+### Update Ollama (Spark)
+
+Ollama updates replace the binary. Models are preserved.
+
+```bash
+# 1. Check current version
+ollama --version
+
+# 2. Update
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 3. Restart
+sudo systemctl restart ollama
+
+# 4. Verify models still present
+ollama list
+make warmup   # reload Nemotron into GPU
+```
+
+**Risk:** Low. Models are stored in `~/.ollama/models/` and survive updates.
+
+### Update Ollama (Mac)
+
+```bash
+# On Mac: update the Ollama.app via its built-in updater
+# Or download the latest from https://ollama.com/download
+# IMPORTANT: restart in correct order
+pkill -f Cursor && pkill -f Ollama && sleep 3
+open -a Ollama && sleep 5 && open -a Cursor
+```
+
+**Risk:** Low. Same as Spark — models survive.
+
+### Update OpenShell
+
+```bash
+# 1. Stop the gateway (sandboxes freeze)
+make stop
+
+# 2. Update OpenShell in the venv
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+pip install --upgrade openshell
+
+# 3. Restart gateway
+make start-gateway
+
+# 4. Verify sandboxes restored
+make sandboxes
+# All four should show Ready (--keep flag preserves them)
+
+# 5. Restart port forward and OpenClaw gateway
+make start-forward
+make start-openclaw
+```
+
+**Risk:** Medium. Gateway restart may lose provider/inference config if the new version changes the data format. Check `make providers` and `make route` after restart. Re-register if needed.
+
+### Update OpenClaw (inside sandbox)
+
+OpenClaw runs inside the `nemoclaw-main` sandbox. Updating it means updating the npm package inside the container.
+
+```bash
+# 1. Connect to sandbox
+make connect-openclaw
+
+# 2. Inside sandbox: update OpenClaw
+npm update -g openclaw
+openclaw --version
+
+# 3. Restart the gateway process
+pkill -f "openclaw gateway"
+openclaw gateway run > /tmp/gateway.log 2>&1 &
+
+# 4. Verify
+openclaw health
+```
+
+**Risk:** Medium. The openclaw.json config format may change between versions. Back up first:
+```bash
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak
+```
+
+### Update NemoClaw CLI
+
+```bash
+# NemoClaw is installed globally via npm
+npm update -g nemoclaw
+nemoclaw --version
+```
+
+**Risk:** Low. NemoClaw CLI is just an orchestration layer — it doesn't store persistent state.
+
+### Update Coding Agents (Claude Code, Codex, Gemini CLI)
+
+These run inside their own sandboxes. Update inside each sandbox:
+
+```bash
+# Claude Code
+make connect-claude
+# Inside: claude update (or npm update -g @anthropic-ai/claude-code)
+
+# Codex
+make connect-codex
+# Inside: npm update -g @openai/codex
+
+# Gemini CLI
+make connect-gemini
+# Inside:
+export PATH=~/.npm-global/bin:$PATH
+npm update -g @google/gemini-cli
+```
+
+**Risk:** Low. Each sandbox is isolated — updating one agent can't break another.
+
+### Update LM Studio
+
+```bash
+# Spark: LM Studio updates via its daemon
+lms update  # if available, otherwise reinstall:
+curl -fsSL https://lmstudio.ai/install.sh | bash
+
+# Mac: update via the LM Studio app (it has a built-in updater)
+# Or download the latest from https://lmstudio.ai
+```
+
+**Risk:** Low.
+
+### Update LiteLLM (Pi)
+
+```bash
+ssh carlos@100.85.6.21
+source ~/litellm-env/bin/activate
+pip install --upgrade litellm
+sudo systemctl restart litellm
+
+# Verify
+curl http://localhost:4000/health
+```
+
+**Risk:** Low. Config file (`~/litellm/config.yaml`) is separate from the binary.
+
+### Update Tailscale
+
+```bash
+# Spark
+sudo tailscale update
+
+# Mac: update via Mac App Store or download from tailscale.com
+
+# Pi
+ssh carlos@100.85.6.21
+sudo tailscale update
+```
+
+**Risk:** Low. Tailscale updates are backwards-compatible.
+
+### Nuclear Option: Rebuild a Sandbox from Scratch
+
+If an update breaks a sandbox beyond repair:
+
+```bash
+# Delete the broken sandbox
+openshell sandbox delete codex-dev
+
+# Recreate it
+openshell sandbox create --keep --name codex-dev --auto-providers -- bash
+
+# Re-apply configuration (Codex example)
+make connect-codex
+# Inside: reinstall and configure from scratch
+# (follow Phase 4 in the deployment guide)
+```
+
+### Rollback
+
+If an update breaks something:
+
+```bash
+# OpenShell: pip install the previous version
+pip install openshell==0.0.11  # pin to known-good version
+
+# Ollama: models are preserved, just reinstall the old version
+# Download specific version from https://github.com/ollama/ollama/releases
+
+# OpenClaw: restore backup config
+cp ~/.openclaw/openclaw.json.bak ~/.openclaw/openclaw.json
+pkill -f "openclaw gateway"
+openclaw gateway run > /tmp/gateway.log 2>&1 &
+```
+
+### Update Order (When Updating Everything)
+
+If you're updating all components at once:
+
+```
+1. Tailscale (all machines) — networking must work first
+2. Ollama (Spark, then Mac) — inference engine
+3. LM Studio (Spark, then Mac) — secondary engine
+4. OpenShell — gateway and sandbox runtime
+5. OpenClaw — agent inside sandbox
+6. NemoClaw CLI — orchestration wrapper
+7. Coding agents (Claude, Codex, Gemini) — each in their sandbox
+8. LiteLLM (Pi) — proxy layer (update last, least critical)
+```
+
+Always run `make status` after each step to verify nothing broke.
+
+---
+
+## 10. Future Improvements
 
 - [ ] Replace TCP forwarder with proper Ollama binding on Mac — create a `launchd` plist that starts Ollama with `OLLAMA_HOST=0.0.0.0` on login, so no manual forwarder restart is needed after reboot
 - [ ] Add vLLM/TensorRT-LLM for production throughput on Spark — vLLM supports continuous batching and PagedAttention which doubles token throughput vs Ollama for multi-user workloads
