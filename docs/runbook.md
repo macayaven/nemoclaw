@@ -28,6 +28,67 @@ The deployment runs across three machines: a DGX Spark (GB10 Blackwell, 128 GB U
 
 When fully deployed you get: a browser-based chat interface at `https://spark-caeb.tail48bab7.ts.net/` backed by Nemotron 120B running fully locally; four isolated coding agent sandboxes you can connect to from any terminal; a single API endpoint (`http://100.85.6.21:4000/v1`) that routes to any model on any machine by name; real-time monitoring of all agent activity, network requests, and policy decisions; and the ability to switch inference providers in ~5 seconds without restarting anything.
 
+### How to Access Everything
+
+| What you want | How to access | Type | Where it runs |
+|---------------|---------------|------|---------------|
+| **Chat with Nemotron 120B** | Open `https://spark-caeb.tail48bab7.ts.net/` in any browser | Web UI | Spark sandbox |
+| **Chat with token auth** | `https://spark-caeb.tail48bab7.ts.net/#token=7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634` | Web UI | Spark sandbox |
+| **Use Claude Code** | `openshell sandbox connect claude-dev` on Spark terminal | Terminal | Spark sandbox |
+| **Use Codex** | `openshell sandbox connect codex-dev` on Spark terminal | Terminal | Spark sandbox |
+| **Use Gemini CLI** | `openshell sandbox connect gemini-dev` on Spark terminal | Terminal | Spark sandbox |
+| **Use OpenClaw TUI** | `openshell sandbox connect nemoclaw-main` then `openclaw tui` | Terminal | Spark sandbox |
+| **Monitor all agents** | `openshell term` on Spark terminal | Terminal TUI | Spark host |
+| **Switch models** | `openshell inference set --provider <name> --model <model>` | CLI | Spark host |
+| **Call any model via API** | `curl http://100.85.6.21:4000/v1/chat/completions -d '{"model":"..."}'` | REST API | Pi (LiteLLM) |
+| **See available models** | `curl http://100.85.6.21:4000/v1/models` | REST API | Pi (LiteLLM) |
+| **Check uptime** | Open `http://100.85.6.21:3001` in browser | Web dashboard | Pi |
+| **Manage DNS** | Open `http://100.85.6.21/admin` in browser | Web dashboard | Pi |
+| **Delegate to agents** | `python -m orchestrator delegate --agent codex --prompt "..."` | CLI | Spark host |
+| **Run agent pipeline** | `python -m orchestrator pipeline --steps "gemini:research,codex:implement"` | CLI | Spark host |
+| **Mac companion status** | `openclaw node status` on Mac terminal | CLI | Mac |
+| **GPU usage** | `nvidia-smi` on Spark terminal | CLI | Spark host |
+| **Loaded models** | `ollama ps` on Spark terminal | CLI | Spark host |
+
+**API endpoints at a glance:**
+
+| Endpoint | URL | Format | Auth |
+|----------|-----|--------|------|
+| NemoClaw UI | `https://spark-caeb.tail48bab7.ts.net/` | Web (HTML) | Token in URL hash |
+| Spark Ollama | `http://100.93.220.104:11434/v1/chat/completions` | OpenAI-compatible JSON | None |
+| Spark LM Studio | `http://100.93.220.104:1234/v1/chat/completions` | OpenAI + Anthropic JSON | None |
+| Mac Ollama | `http://100.116.228.36:11435/v1/chat/completions` | OpenAI-compatible JSON | None |
+| Pi LiteLLM (unified) | `http://100.85.6.21:4000/v1/chat/completions` | OpenAI-compatible JSON | API key if configured |
+| Sandbox inference | `https://inference.local/v1/chat/completions` | OpenAI-compatible JSON | Injected by OpenShell |
+
+**API usage examples:**
+
+```bash
+# Chat with Nemotron 120B directly (from any machine on Tailscale)
+curl http://100.93.220.104:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nemotron-3-super:120b", "messages":[{"role":"user","content":"hello"}]}'
+
+# Chat with qwen3:8b on Mac (fast responses)
+curl http://100.116.228.36:11435/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3:8b", "messages":[{"role":"user","content":"hello"}]}'
+
+# Use LiteLLM unified endpoint — routes to right machine by model name
+curl http://100.85.6.21:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nemotron-3-super:120b", "messages":[{"role":"user","content":"hello"}]}'
+
+# Use from Python (any machine on Tailscale)
+from openai import OpenAI
+client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="nemotron-3-super:120b",
+    messages=[{"role": "user", "content": "What is NemoClaw?"}],
+)
+print(response.choices[0].message.content)
+```
+
 ---
 
 ## 2. Architecture Diagrams
