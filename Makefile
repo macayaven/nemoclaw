@@ -284,6 +284,36 @@ chat-mac: ## Quick chat with Mac's qwen3:8b (usage: make chat-mac MSG="hello")
 		python3 -c "import json,sys; print(json.load(sys.stdin)['choices'][0]['message']['content'])"
 
 # ===========================================================================
+# Updates (one at a time, verify after each)
+# ===========================================================================
+
+.PHONY: update-ollama
+update-ollama: ## Update Ollama on Spark (models preserved)
+	@curl -fsSL https://ollama.com/install.sh | sh && \
+		sudo systemctl restart ollama && sleep 2 && \
+		ollama --version && echo "Ollama updated. Run 'make warmup' to reload model."
+
+.PHONY: update-openshell
+update-openshell: ## Update OpenShell (stops gateway, restarts after)
+	@echo "Stopping gateway..." && $(OS_ENV) && openshell gateway stop 2>/dev/null; \
+		pip install --upgrade openshell && \
+		echo "Restarting gateway..." && openshell gateway start && \
+		echo "Updated. Run 'make status' to verify."
+
+.PHONY: update-litellm
+update-litellm: ## Update LiteLLM on Pi
+	@ssh carlos@$(PI_IP) 'source ~/litellm-env/bin/activate && pip install --upgrade litellm && sudo systemctl restart litellm' && \
+		echo "LiteLLM updated on Pi"
+
+.PHONY: versions
+versions: ## Show all component versions
+	@echo "Ollama:    $$(ollama --version 2>/dev/null || echo 'not found')"
+	@echo "LM Studio: $$(lms --version 2>/dev/null || echo 'not found')"
+	@echo "OpenShell: $$($(OS_ENV) && openshell --version 2>/dev/null || echo 'not found')"
+	@echo "NemoClaw:  $$(nemoclaw --version 2>/dev/null || echo 'not found')"
+	@echo "Node.js:   $$(node --version 2>/dev/null || echo 'not found')"
+
+# ===========================================================================
 # Git & CI
 # ===========================================================================
 
