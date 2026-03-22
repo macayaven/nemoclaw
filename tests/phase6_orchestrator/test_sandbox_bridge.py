@@ -7,7 +7,6 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-
 from orchestrator.config import OrchestratorSettings
 from orchestrator.sandbox_bridge import SandboxBridge, SandboxResult
 
@@ -36,7 +35,7 @@ class TestSandboxBridge:
         bridge = SandboxBridge(settings=OrchestratorSettings())
         recorded: list[list[str]] = []
 
-        def fake_run(cmd, capture_output, text, timeout):  # noqa: ANN001, ANN201
+        def fake_run(cmd, capture_output, text, timeout):
             recorded.append(cmd)
             return SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
 
@@ -59,7 +58,7 @@ class TestSandboxBridge:
     def test_run_in_sandbox_propagates_timeout(self, monkeypatch) -> None:
         bridge = SandboxBridge(settings=OrchestratorSettings())
 
-        def fake_run(cmd, capture_output, text, timeout):  # noqa: ANN001, ANN201
+        def fake_run(cmd, capture_output, text, timeout):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
 
         monkeypatch.setattr(subprocess, "run", fake_run)

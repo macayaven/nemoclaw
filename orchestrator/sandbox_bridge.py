@@ -1,4 +1,4 @@
-"""Bridge that executes commands inside OpenShell sandbox containers.
+r"""Bridge that executes commands inside OpenShell sandbox containers.
 
 The bridge constructs ``openshell sandbox connect <name> -- <cmd>`` shell
 invocations and returns structured results. All I/O crosses the sandbox
@@ -21,7 +21,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, computed_field
 
 if TYPE_CHECKING:
     from orchestrator.config import OrchestratorSettings
@@ -65,10 +65,10 @@ class SandboxResult(BaseModel):
 # calling send_prompt.  The placeholder ``{prompt}`` is replaced with the
 # properly shell-quoted prompt text.
 _AGENT_CMD_TEMPLATES: dict[str, str] = {
-    "openclaw": 'openclaw agent --agent main --local -m {prompt} --session-id orchestrator',
-    "claude": 'claude -p {prompt} --output-format text',
-    "codex": 'source ~/.bashrc && cd /sandbox && codex exec {prompt}',
-    "gemini": 'gemini -p {prompt}',
+    "openclaw": "openclaw agent --agent main --local -m {prompt} --session-id orchestrator",
+    "claude": "claude -p {prompt} --output-format text",
+    "codex": "source ~/.bashrc && cd /sandbox && codex exec {prompt}",
+    "gemini": "gemini -p {prompt}",
 }
 
 
@@ -129,10 +129,14 @@ class SandboxBridge:
         # Use SSH with the openshell ssh-proxy as ProxyCommand instead.
         outer_cmd: list[str] = [
             "ssh",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-o", f"ProxyCommand=openshell ssh-proxy --gateway-name openshell --name {sandbox_name}",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            f"ProxyCommand=openshell ssh-proxy --gateway-name openshell --name {sandbox_name}",
             f"sandbox@openshell-{sandbox_name}",
             command,
         ]
@@ -198,8 +202,7 @@ class SandboxBridge:
         if agent_type not in _AGENT_CMD_TEMPLATES:
             supported = ", ".join(sorted(_AGENT_CMD_TEMPLATES))
             raise ValueError(
-                f"Unsupported agent_type {agent_type!r}. "
-                f"Supported values: {supported}"
+                f"Unsupported agent_type {agent_type!r}. Supported values: {supported}"
             )
 
         template = _AGENT_CMD_TEMPLATES[agent_type]
@@ -247,6 +250,4 @@ class SandboxBridge:
         Returns:
             Sorted list of sandbox name strings.
         """
-        return sorted(
-            {agent.sandbox_name for agent in self.settings.agents.values()}
-        )
+        return sorted({agent.sandbox_name for agent in self.settings.agents.values()})

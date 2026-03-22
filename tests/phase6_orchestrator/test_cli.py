@@ -6,7 +6,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from orchestrator.task_manager import Task
 
 pytestmark = pytest.mark.phase6
@@ -32,7 +31,7 @@ class _FakeTaskManager:
             )
         ]
 
-    def list_tasks(self, status=None, assigned_to=None):  # noqa: ANN001, ANN201
+    def list_tasks(self, status=None, assigned_to=None):
         tasks = self._tasks
         if status is not None:
             tasks = [task for task in tasks if task.status == status]
@@ -49,7 +48,7 @@ class _FakeOrchestrator:
     def delegate(self, prompt: str, agent: str, task_type: str = "analysis") -> str:
         return f"{agent}:{task_type}:{prompt}"
 
-    def pipeline(self, prompt: str, steps):  # noqa: ANN001, ANN201
+    def pipeline(self, prompt: str, steps):
         step_results = [
             SimpleNamespace(
                 step_index=index,

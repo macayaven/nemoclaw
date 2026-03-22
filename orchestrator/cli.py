@@ -1,4 +1,4 @@
-"""Command-line interface for the NemoClaw orchestrator.
+r"""Command-line interface for the NemoClaw orchestrator.
 
 Provides a simple argparse-based CLI that wraps the Orchestrator API for
 interactive use and scripting.
@@ -30,7 +30,6 @@ from typing import NoReturn
 from orchestrator.config import OrchestratorSettings
 from orchestrator.orchestrator import Orchestrator, PipelineStep
 from orchestrator.task_manager import TaskType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,15 +80,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Execute a sequential multi-agent pipeline. "
             "Steps are specified as a comma-separated list of "
-            "\"agent:task_type\" pairs."
+            '"agent:task_type" pairs.'
         ),
     )
     pipeline_parser.add_argument(
         "--steps",
         required=True,
         help=(
-            "Comma-separated pipeline steps, e.g. "
-            "\"gemini:research,codex:implement,claude:review\"."
+            'Comma-separated pipeline steps, e.g. "gemini:research,codex:implement,claude:review".'
         ),
     )
     pipeline_parser.add_argument(
@@ -150,7 +148,7 @@ def _cmd_delegate(args: argparse.Namespace, orc: Orchestrator) -> int:
     except KeyError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Delegation failed: {exc}", file=sys.stderr)
         return 1
 
@@ -177,8 +175,7 @@ def _cmd_pipeline(args: argparse.Namespace, orc: Orchestrator) -> int:
         raw = raw.strip()
         if ":" not in raw:
             print(
-                f"Error: invalid step specification {raw!r}. "
-                "Expected format: \"agent:task_type\"",
+                f'Error: invalid step specification {raw!r}. Expected format: "agent:task_type"',
                 file=sys.stderr,
             )
             return 1
@@ -215,7 +212,7 @@ def _cmd_pipeline(args: argparse.Namespace, orc: Orchestrator) -> int:
 
     try:
         result = orc.pipeline(prompt=args.prompt, steps=steps)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Pipeline failed: {exc}", file=sys.stderr)
         return 1
 
@@ -340,7 +337,7 @@ def main(argv: list[str] | None = None) -> NoReturn:
     try:
         settings = OrchestratorSettings()
         orc = Orchestrator(settings)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Failed to initialise orchestrator: {exc}", file=sys.stderr)
         sys.exit(2)
 

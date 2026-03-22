@@ -20,20 +20,20 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+from orchestrator.config import AgentConfig, OrchestratorSettings
 from orchestrator.orchestrator import Orchestrator
-from orchestrator.config import OrchestratorSettings, AgentConfig
-from orchestrator.task_manager import Task, TaskManager
 from orchestrator.sandbox_bridge import SandboxBridge, SandboxResult
 from orchestrator.shared_mcp import SharedWorkspace
+from orchestrator.task_manager import Task, TaskManager
 
 __all__ = [
+    "AgentConfig",
     "Orchestrator",
     "OrchestratorSettings",
-    "AgentConfig",
-    "Task",
-    "TaskManager",
     "SandboxBridge",
     "SandboxResult",
     "SharedWorkspace",
+    "Task",
+    "TaskManager",
     "__version__",
 ]

@@ -18,12 +18,12 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Task model
@@ -57,9 +57,7 @@ class Task(BaseModel):
     assigned_to: str
     status: TaskStatus = "pending"
     result: str | None = None
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed_at: str | None = None
     parent_task_id: str | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
@@ -93,7 +91,9 @@ class TaskManager:
         """
         self.shared_workspace = Path(shared_workspace)
         self.shared_workspace.mkdir(parents=True, exist_ok=True)
+        self._tasks_file = self.shared_workspace / self._TASKS_FILE
         self._tasks: dict[str, Task] = {}
+        self._tasks_mtime_ns: int | None = None
         self._lock = threading.Lock()
         self._load()
 
@@ -164,7 +164,7 @@ class TaskManager:
                     "status": status,
                     "result": result if result is not None else task.result,
                     "completed_at": (
-                        datetime.now(timezone.utc).isoformat()
+                        datetime.now(UTC).isoformat()
                         if status in ("completed", "failed")
                         else task.completed_at
                     ),
@@ -226,9 +226,7 @@ class TaskManager:
         """
         with self._lock:
             self._sync_from_disk_locked()
-            tasks = [
-                t for t in self._tasks.values() if t.parent_task_id == parent_task_id
-            ]
+            tasks = [t for t in self._tasks.values() if t.parent_task_id == parent_task_id]
         return sorted(tasks, key=lambda t: t.created_at)
 
     # ------------------------------------------------------------------
@@ -253,25 +251,54 @@ class TaskManager:
 
     def _save(self) -> None:
         """Persist current in-memory tasks to disk; caller must hold lock."""
-        tasks_file = self.shared_workspace / self._TASKS_FILE
         payload = {tid: task.model_dump() for tid, task in self._tasks.items()}
-        tasks_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._tasks_file.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.shared_workspace,
+            prefix=f".{self._TASKS_FILE}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_file.write(json.dumps(payload, indent=2))
+            temp_path = Path(tmp_file.name)
+
+        temp_path.replace(self._tasks_file)
+        self._tasks_mtime_ns = self._tasks_file.stat().st_mtime_ns
 
     def _sync_from_disk_locked(self) -> None:
         """Merge the latest on-disk state into memory; caller must hold lock."""
-        self._tasks.update(self._read_tasks_file())
+        if not self._tasks_file.exists():
+            self._tasks = {}
+            self._tasks_mtime_ns = None
+            return
+
+        file_mtime_ns = self._tasks_file.stat().st_mtime_ns
+        if self._tasks_mtime_ns == file_mtime_ns:
+            return
+
+        self._tasks = self._read_tasks_file()
+        self._tasks_mtime_ns = file_mtime_ns
 
     def _read_tasks_file(self) -> dict[str, Task]:
         """Read and parse the persisted task file."""
-        tasks_file = self.shared_workspace / self._TASKS_FILE
-        if not tasks_file.exists():
+        if not self._tasks_file.exists():
             return {}
         try:
-            raw = json.loads(tasks_file.read_text(encoding="utf-8"))
+            raw = json.loads(self._tasks_file.read_text(encoding="utf-8"))
             return {tid: Task(**data) for tid, data in raw.items()}
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return {}
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Failed to read persisted task state from {self._tasks_file}: {exc}"
+            ) from exc
 
     def _load(self) -> None:
         """Load tasks from disk into memory (called once at init)."""
+        if not self._tasks_file.exists():
+            self._tasks = {}
+            self._tasks_mtime_ns = None
+            return
+
         self._tasks = self._read_tasks_file()
+        self._tasks_mtime_ns = self._tasks_file.stat().st_mtime_ns

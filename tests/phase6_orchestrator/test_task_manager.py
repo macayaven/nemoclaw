@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from orchestrator.task_manager import Task, TaskManager
 
 pytestmark = pytest.mark.phase6
@@ -150,6 +149,15 @@ class TestTaskPersistence:
 
         assert task_from_a.id in task_ids
         assert task_from_b.id in task_ids
+
+    def test_corrupt_storage_raises_instead_of_clobbering_state(self, tmp_path) -> None:
+        shared_workspace = tmp_path / "shared"
+        shared_workspace.mkdir()
+        tasks_file = shared_workspace / "tasks.json"
+        tasks_file.write_text("{not valid json", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="Failed to read persisted task state"):
+            TaskManager(shared_workspace)
 
 
 class TestTaskQueries:
