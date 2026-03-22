@@ -1127,7 +1127,8 @@ tailscale funnel --bg 18789
 
 ### Phase 6: Orchestrator
 
-The orchestrator runs outside all sandboxes and delegates tasks to agent sandboxes via `openshell sandbox connect`.
+The orchestrator runs outside all sandboxes and delegates tasks to agent sandboxes
+through the checked-in `orchestrator` Python package.
 
 #### Step 6.1: Set Up Orchestrator Environment
 
@@ -1135,81 +1136,40 @@ The orchestrator runs outside all sandboxes and delegates tasks to agent sandbox
 # On the Spark:
 python3 -m venv ~/workspace/nemoclaw/orchestrator-env
 source ~/workspace/nemoclaw/orchestrator-env/bin/activate
-pip install openai-agents
+pip install -e ~/workspace/nemoclaw
 ```
 
-#### Step 6.2: Create Bridge Tools
+#### Step 6.2: Configure Shared Workspace
 
 ```bash
-cat > ~/workspace/nemoclaw/orchestrator/sandbox_tools.py << 'EOF'
-import subprocess
-
-def run_in_sandbox(sandbox_name: str, command: str, timeout: int = 120) -> str:
-    """Execute a command inside an OpenShell sandbox and return output."""
-    result = subprocess.run(
-        ["openshell", "sandbox", "connect", sandbox_name, "--", "bash", "-c", command],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return result.stdout + result.stderr
-
-def claude_analyze(prompt: str) -> str:
-    return run_in_sandbox(
-        "claude-dev",
-        f'openclaw agent --agent main --local -m "{prompt}" --session-id orchestrator'
-    )
-
-def codex_generate(prompt: str) -> str:
-    return run_in_sandbox(
-        "codex-dev",
-        f'cd ~/projects/scratch && codex exec "{prompt}"'
-    )
-
-def gemini_research(prompt: str) -> str:
-    return run_in_sandbox(
-        "gemini-dev",
-        f'gemini -p "{prompt}"'
-    )
-EOF
+mkdir -p ~/workspace/shared-agents
+export NEMOCLAW_SHARED_WORKSPACE=~/workspace/shared-agents
 ```
 
 #### Step 6.3: Health Check
 
 ```bash
 source ~/workspace/nemoclaw/orchestrator-env/bin/activate
-python3 - << 'EOF'
-import subprocess, json
-
-sandboxes = ["nemoclaw-main", "claude-dev", "codex-dev", "gemini-dev"]
-result = subprocess.run(
-    ["openshell", "sandbox", "list", "--json"],
-    capture_output=True, text=True
-)
-data = json.loads(result.stdout)
-running = [s["name"] for s in data if s["status"] == "Ready"]
-print(f"Running sandboxes: {running}")
-missing = [s for s in sandboxes if s not in running]
-if missing:
-    print(f"WARNING: Not running: {missing}")
-else:
-    print("All sandboxes healthy.")
-EOF
+python -m orchestrator health
 ```
 
 #### Step 6.4: Delegation Test
 
 ```bash
 source ~/workspace/nemoclaw/orchestrator-env/bin/activate
-python3 - << 'EOF'
-import subprocess
-result = subprocess.run(
-    ["openshell", "sandbox", "connect", "codex-dev", "--", "bash", "-c",
-     "cd ~/projects/scratch && codex exec 'write hello world in python'"],
-    capture_output=True, text=True, timeout=60
-)
-print(result.stdout)
-EOF
+python -m orchestrator delegate \
+  --agent codex \
+  --task-type implementation \
+  --prompt "write hello world in python"
+```
+
+#### Step 6.5: Multi-Step Pipeline
+
+```bash
+source ~/workspace/nemoclaw/orchestrator-env/bin/activate
+python -m orchestrator pipeline \
+  --steps "gemini:research,codex:code_generation,claude:code_review" \
+  --prompt "Build a REST API for user authentication"
 ```
 
 ---
@@ -2016,32 +1976,30 @@ lms ls
 
 ### 7.6 orchestrator CLI / Python API
 
-The orchestrator uses OpenAI Agents SDK and is invoked as a Python script.
+The orchestrator is exposed as a Python module and CLI.
 
 ```bash
 source ~/workspace/nemoclaw/orchestrator-env/bin/activate
 
 # Run a health check across all sandboxes
-python3 ~/workspace/nemoclaw/orchestrator/health_check.py
+python -m orchestrator health
 
 # Show status of all agents
-python3 ~/workspace/nemoclaw/orchestrator/status.py
+python -m orchestrator status
 
 # Delegate a single task to a specific agent
-python3 - << 'EOF'
-from sandbox_tools import codex_generate
-result = codex_generate("write a function that parses JSON from a file")
-print(result)
-EOF
+python -m orchestrator delegate \
+  --agent codex \
+  --task-type implementation \
+  --prompt "write a function that parses JSON from a file"
 
 # Run a full pipeline: research → implement → review
-python3 ~/workspace/nemoclaw/orchestrator/pipeline.py \
-    "Build a REST API for user authentication"
+python -m orchestrator pipeline \
+  --steps "gemini:research,codex:code_generation,claude:code_review" \
+  --prompt "Build a REST API for user authentication"
 
-# Run tasks in parallel across agents
-python3 ~/workspace/nemoclaw/orchestrator/parallel.py \
-    --agents codex-dev,claude-dev \
-    --task "Optimize this function: [paste code]"
+# Emit JSON for automation
+python -m orchestrator --json status
 ```
 
 ### 7.7 tailscale CLI

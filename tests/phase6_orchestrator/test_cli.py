@@ -1,137 +1,161 @@
-"""
-test_cli.py — Phase 6 tests for the orchestrator CLI (orchestrator.cli).
-
-Covers:
-  - ``python -m orchestrator health`` output (behavioural)
-  - ``python -m orchestrator status`` exit code (contract)
-  - Invalid subcommand handling (negative)
-
-Tests invoke the CLI as a subprocess so that they exercise the real entry-point
-rather than calling internal Python functions directly.  This approach catches
-argument-parsing regressions that unit tests of individual functions miss.
-
-All tests are marked @pytest.mark.phase6.
-"""
+"""Phase 6 tests for the orchestrator CLI."""
 
 from __future__ import annotations
 
-import subprocess
-import sys
+import json
+from types import SimpleNamespace
 
 import pytest
 
+from orchestrator.task_manager import Task
+
 pytestmark = pytest.mark.phase6
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
-_ORCHESTRATOR_MODULE = "orchestrator"
+class _FakeBridge:
+    def list_sandboxes(self) -> list[str]:
+        return ["claude-dev", "nemoclaw-main"]
 
-
-def _run_cli(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    """Invoke the orchestrator CLI as ``python -m orchestrator <args>``.
-
-    Args:
-        *args: Subcommand and flags to pass to the CLI.
-        timeout: Maximum seconds to wait for the process to exit.
-
-    Returns:
-        A :class:`subprocess.CompletedProcess` with stdout, stderr, and
-        returncode captured.
-    """
-    cmd = [sys.executable, "-m", _ORCHESTRATOR_MODULE, *args]
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    def is_sandbox_healthy(self, sandbox_name: str) -> bool:
+        return sandbox_name != "claude-dev"
 
 
-# ---------------------------------------------------------------------------
-# Behavioural tests — health subcommand
-# ---------------------------------------------------------------------------
+class _FakeTaskManager:
+    def __init__(self) -> None:
+        self._tasks = [
+            Task(
+                type="analysis",
+                prompt="Summarise the deployment state",
+                assigned_to="openclaw",
+                status="completed",
+                result="ready",
+            )
+        ]
+
+    def list_tasks(self, status=None, assigned_to=None):  # noqa: ANN001, ANN201
+        tasks = self._tasks
+        if status is not None:
+            tasks = [task for task in tasks if task.status == status]
+        if assigned_to is not None:
+            tasks = [task for task in tasks if task.assigned_to == assigned_to]
+        return tasks
+
+
+class _FakeOrchestrator:
+    def __init__(self) -> None:
+        self.bridge = _FakeBridge()
+        self.task_manager = _FakeTaskManager()
+
+    def delegate(self, prompt: str, agent: str, task_type: str = "analysis") -> str:
+        return f"{agent}:{task_type}:{prompt}"
+
+    def pipeline(self, prompt: str, steps):  # noqa: ANN001, ANN201
+        step_results = [
+            SimpleNamespace(
+                step_index=index,
+                agent=step.agent,
+                task_type=step.task_type,
+                output=f"output-{index + 1}",
+                duration_ms=10.0,
+                model_dump=lambda idx=index, step=step: {
+                    "step_index": idx,
+                    "agent": step.agent,
+                    "task_type": step.task_type,
+                    "output": f"output-{idx + 1}",
+                    "duration_ms": 10.0,
+                    "task_id": f"task-{idx + 1}",
+                },
+            )
+            for index, step in enumerate(steps)
+        ]
+        return SimpleNamespace(
+            final_output=f"pipeline:{prompt}",
+            total_duration_ms=20.0,
+            steps=step_results,
+        )
+
+
+@pytest.fixture
+def fake_cli(monkeypatch):
+    """Patch CLI wiring so tests can exercise the real parser offline."""
+    from orchestrator import cli
+
+    fake_orchestrator = _FakeOrchestrator()
+    monkeypatch.setattr(cli, "OrchestratorSettings", lambda: object())
+    monkeypatch.setattr(cli, "Orchestrator", lambda settings: fake_orchestrator)
+    return cli
 
 
 class TestCLIHealth:
-    """Behavioural tests: 'python -m orchestrator health' checks sandbox liveness."""
+    """Health command tests."""
 
-    @pytest.mark.timeout(120)
-    def test_health_command(self, spark_ssh) -> None:
-        """'python -m orchestrator health' exits 0 and names at least one sandbox.
+    def test_health_command_reports_sandboxes(self, fake_cli, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            fake_cli.main(["health"])
 
-        The output must include the name of a known sandbox (nemoclaw-main)
-        to prove that the CLI is actually talking to the DGX Spark and not
-        returning a static placeholder message.
-        """
-        result = _run_cli("health")
+        captured = capsys.readouterr()
 
-        assert result.returncode == 0, (
-            f"'orchestrator health' exited {result.returncode}.\n"
-            f"stdout: {result.stdout!r}\n"
-            f"stderr: {result.stderr!r}"
-        )
-
-        combined = (result.stdout + result.stderr).lower()
-        assert "nemoclaw-main" in combined or "sandbox" in combined, (
-            "Expected 'orchestrator health' output to mention a sandbox name.\n"
-            f"stdout: {result.stdout!r}\n"
-            f"stderr: {result.stderr!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Contract tests — status subcommand
-# ---------------------------------------------------------------------------
+        assert exc_info.value.code == 1
+        assert "nemoclaw-main" in captured.out
+        assert "UNREACHABLE" in captured.out
 
 
 class TestCLIStatus:
-    """Contract tests: 'python -m orchestrator status' runs without crashing."""
+    """Status command tests."""
 
-    @pytest.mark.timeout(60)
-    def test_status_command(self) -> None:
-        """'python -m orchestrator status' exits without an unhandled exception.
+    def test_status_command_renders_table(self, fake_cli, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            fake_cli.main(["status"])
 
-        The command is allowed to exit with any code that indicates a known
-        state (0 = all healthy, non-zero = degraded but handled).  It must not
-        produce a Python traceback on stderr.
-        """
-        result = _run_cli("status")
+        captured = capsys.readouterr()
 
-        # Tracebacks start with "Traceback (most recent call last):"
-        assert "Traceback (most recent call last)" not in result.stderr, (
-            f"'orchestrator status' produced an unhandled Python exception:\n{result.stderr}"
-        )
+        assert exc_info.value.code == 0
+        assert "ID" in captured.out
+        assert "openclaw" in captured.out
 
-        # The command should produce some output on stdout or stderr.
-        combined = result.stdout + result.stderr
-        assert len(combined.strip()) > 0, (
-            "'orchestrator status' produced no output on either stdout or stderr"
-        )
+    def test_status_command_supports_json(self, fake_cli, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            fake_cli.main(["--json", "status"])
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert exc_info.value.code == 0
+        assert payload[0]["assigned_to"] == "openclaw"
+        assert payload[0]["status"] == "completed"
 
 
-# ---------------------------------------------------------------------------
-# Negative tests — invalid subcommands
-# ---------------------------------------------------------------------------
+class TestCLIDelegate:
+    """Delegate command tests."""
+
+    def test_delegate_command_supports_json(self, fake_cli, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            fake_cli.main(
+                [
+                    "--json",
+                    "delegate",
+                    "--agent",
+                    "codex",
+                    "--prompt",
+                    "Build the parser",
+                    "--task-type",
+                    "implementation",
+                ]
+            )
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert exc_info.value.code == 0
+        assert payload["agent"] == "codex"
+        assert payload["response"] == "codex:implementation:Build the parser"
 
 
 class TestCLINegative:
-    """Negative tests: the CLI exits non-zero for unrecognised subcommands."""
+    """Negative command handling tests."""
 
-    @pytest.mark.timeout(15)
-    def test_invalid_command(self) -> None:
-        """'python -m orchestrator this-is-not-a-real-subcommand' exits non-zero.
+    def test_invalid_command_exits_nonzero(self) -> None:
+        from orchestrator import cli
 
-        CLI frameworks (argparse, click, typer) standardly exit with code 2
-        for unrecognised arguments, but any non-zero code is acceptable here.
-        The test only verifies that the CLI does not silently succeed (exit 0)
-        when given a nonsense subcommand.
-        """
-        result = _run_cli("this-is-not-a-real-subcommand", timeout=15)
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["this-is-not-a-real-subcommand"])
 
-        assert result.returncode != 0, (
-            "Expected a non-zero exit code for an invalid subcommand, but got 0.\n"
-            f"stdout: {result.stdout!r}\n"
-            f"stderr: {result.stderr!r}"
-        )
+        assert exc_info.value.code != 0

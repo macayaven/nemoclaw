@@ -120,6 +120,9 @@ class SandboxBridge:
         Raises:
             subprocess.TimeoutExpired: If the command exceeds *timeout*.
         """
+        if not command.strip():
+            raise ValueError("command must not be empty")
+
         effective_timeout = timeout if timeout is not None else self.settings.sandbox_timeout
 
         # openshell sandbox connect doesn't accept trailing commands.

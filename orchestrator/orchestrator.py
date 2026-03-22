@@ -137,6 +137,7 @@ class Orchestrator:
         agent: str,
         task_type: TaskType = "analysis",
         parent_task_id: str | None = None,
+        _current_depth: int = 0,
     ) -> str:
         """Delegate *prompt* to a single agent sandbox and return its response.
 
@@ -148,15 +149,23 @@ class Orchestrator:
             agent: Logical agent name (key in ``settings.agents``).
             task_type: Broad category of work for reporting purposes.
             parent_task_id: Optional parent task ID for subtask tracing.
+            _current_depth: Internal recursion counter for nested delegations.
 
         Returns:
             Agent response text.
 
         Raises:
             KeyError: If *agent* is not in the current settings.
+            RecursionError: If nested delegation exceeds the configured limit.
             RuntimeError: If the sandbox command fails.
             subprocess.TimeoutExpired: If the agent exceeds the timeout.
         """
+        if _current_depth > self.settings.max_delegation_depth:
+            raise RecursionError(
+                "Maximum delegation depth exceeded: "
+                f"{_current_depth} > {self.settings.max_delegation_depth}"
+            )
+
         agent_config = self.settings.get_agent(agent)
 
         task = self.task_manager.create_task(
@@ -374,6 +383,9 @@ class Orchestrator:
             Dictionary mapping agent name to its response (or an error
             message prefixed with ``"ERROR: "``).
         """
+        if not agents:
+            return {}
+
         workers = max_workers if max_workers is not None else len(agents)
         results: dict[str, str] = {}
 

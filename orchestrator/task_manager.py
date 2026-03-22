@@ -129,6 +129,7 @@ class TaskManager:
             metadata=metadata or {},
         )
         with self._lock:
+            self._sync_from_disk_locked()
             self._tasks[task.id] = task
             self._save()
         return task
@@ -156,6 +157,7 @@ class TaskManager:
             KeyError: If *task_id* does not exist.
         """
         with self._lock:
+            self._sync_from_disk_locked()
             task = self._get_task_locked(task_id)
             updated = task.model_copy(
                 update={
@@ -185,6 +187,7 @@ class TaskManager:
             KeyError: If *task_id* does not exist.
         """
         with self._lock:
+            self._sync_from_disk_locked()
             return self._get_task_locked(task_id)
 
     def list_tasks(
@@ -202,6 +205,7 @@ class TaskManager:
             List of matching tasks ordered by ``created_at``.
         """
         with self._lock:
+            self._sync_from_disk_locked()
             tasks = list(self._tasks.values())
 
         if status is not None:
@@ -221,6 +225,7 @@ class TaskManager:
             List of child tasks ordered by ``created_at``.
         """
         with self._lock:
+            self._sync_from_disk_locked()
             tasks = [
                 t for t in self._tasks.values() if t.parent_task_id == parent_task_id
             ]
@@ -252,14 +257,21 @@ class TaskManager:
         payload = {tid: task.model_dump() for tid, task in self._tasks.items()}
         tasks_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def _load(self) -> None:
-        """Load tasks from disk into memory (called once at init)."""
+    def _sync_from_disk_locked(self) -> None:
+        """Merge the latest on-disk state into memory; caller must hold lock."""
+        self._tasks.update(self._read_tasks_file())
+
+    def _read_tasks_file(self) -> dict[str, Task]:
+        """Read and parse the persisted task file."""
         tasks_file = self.shared_workspace / self._TASKS_FILE
         if not tasks_file.exists():
-            return
+            return {}
         try:
             raw = json.loads(tasks_file.read_text(encoding="utf-8"))
-            self._tasks = {tid: Task(**data) for tid, data in raw.items()}
+            return {tid: Task(**data) for tid, data in raw.items()}
         except (json.JSONDecodeError, TypeError, ValueError):
-            # Corrupted state file; start fresh rather than crashing.
-            self._tasks = {}
+            return {}
+
+    def _load(self) -> None:
+        """Load tasks from disk into memory (called once at init)."""
+        self._tasks = self._read_tasks_file()

@@ -60,6 +60,14 @@ nemoclaw/
     ├── models.py                  # Pydantic models for command output validation
     ├── helpers.py                 # poll_until_ready(), parse_json_output(), etc.
     │
+    ├── phase6_orchestrator/
+    │   ├── __init__.py
+    │   ├── test_cli.py
+    │   ├── test_orchestrator.py
+    │   ├── test_sandbox_bridge.py
+    │   ├── test_shared_workspace.py
+    │   └── test_task_manager.py
+    │
     ├── phase0_preflight/
     │   ├── __init__.py
     │   ├── test_spark_prerequisites.py
@@ -100,8 +108,6 @@ nemoclaw/
     │
     └── phase5_mobile/
         ├── __init__.py
-        ├── test_tailscale_gateway.py
-        └── test_remote_access.py
         ├── test_tailscale_gateway.py
         └── test_remote_access.py
 ```
@@ -913,14 +919,27 @@ version = "0.1.0"
 description = "TDD test suite for NemoClaw multi-node deployment"
 requires-python = ">=3.12"
 dependencies = [
+    "nemoclaw",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
-    "pytest-order>=1.3",
+    "pytest-xdist>=3.5",
+    "pytest-rerunfailures>=14.0",
+    "pytest-testinfra>=10.0",
     "httpx>=0.27",
     "pydantic>=2.9",
+    "pydantic-settings>=2.5",
     "fabric>=3.2",
+    "tenacity>=9.0",
+    "packaging>=24.0",
     "python-dotenv>=1.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "isort>=5.13",
+    "pydocstyle>=6.3",
 ]
+
+[tool.uv.sources]
+nemoclaw = { path = "..", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["."]
@@ -931,6 +950,7 @@ markers = [
     "phase3: Raspberry Pi infrastructure",
     "phase4: Coding agent sandboxes",
     "phase5: Mobile and Tailscale",
+    "phase6: Orchestrator and inter-agent coordination",
 ]
 timeout = 60
 ```
@@ -965,6 +985,9 @@ uv run pytest phase4_agents/ -v --tb=short
 
 # Phase 5
 uv run pytest phase5_mobile/ -v --tb=short
+
+# Phase 6
+uv run pytest phase6_orchestrator/ -v --tb=short
 
 # Run everything
 uv run pytest -v --tb=short
