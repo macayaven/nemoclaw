@@ -52,6 +52,127 @@ route: ## Show active inference route
 	@$(OS_ENV) && openshell inference get
 
 # ===========================================================================
+# Full Setup (from scratch or after gateway recreate)
+# ===========================================================================
+
+.PHONY: setup
+setup: ## Full setup: gateway + providers + sandboxes + onboard prompt
+	@echo "=== Step 1/5: Starting gateway ==="
+	@$(OS_ENV) && openshell gateway start 2>&1 | tail -3
+	@echo ""
+	@echo "=== Step 2/5: Registering providers ==="
+	@$(OS_ENV) && \
+		openshell provider create --name local-ollama --type openai \
+			--credential OPENAI_API_KEY=not-needed \
+			--config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1 2>&1 | tail -1; \
+		openshell provider create --name local-lmstudio --type openai \
+			--credential OPENAI_API_KEY=lm-studio \
+			--config OPENAI_BASE_URL=http://host.openshell.internal:1234/v1 2>&1 | tail -1; \
+		openshell provider create --name mac-ollama --type openai \
+			--credential OPENAI_API_KEY=not-needed \
+			--config OPENAI_BASE_URL=http://$(MAC_IP):11435/v1 2>&1 | tail -1
+	@echo ""
+	@echo "=== Step 3/5: Setting inference route ==="
+	@$(OS_ENV) && openshell inference set --provider local-ollama --model nemotron-3-super:120b 2>&1 | tail -1
+	@echo ""
+	@echo "=== Step 4/5: Creating sandboxes ==="
+	@$(OS_ENV) && \
+		openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from openclaw -- openclaw-start 2>&1 | tail -3; \
+		openshell sandbox create --keep --name claude-dev --auto-providers -- claude 2>&1 | tail -1; \
+		openshell sandbox create --keep --name codex-dev --auto-providers -- bash 2>&1 | tail -1; \
+		openshell sandbox create --keep --name gemini-dev --auto-providers -- bash 2>&1 | tail -1
+	@echo ""
+	@echo "=== Step 5/5: Manual step required ==="
+	@echo ""
+	@echo "  Run: make onboard"
+	@echo ""
+	@echo "  This opens the OpenClaw wizard inside the sandbox."
+	@echo "  Select: QuickStart → Custom Provider → URL: https://inference.local/v1"
+	@echo "  API key: ollama → OpenAI-compatible → Model: nemotron-3-super:120b"
+	@echo "  Skip all optional steps (channels, search, skills, hooks)."
+	@echo ""
+	@echo "  After the wizard completes, run: make post-onboard"
+
+.PHONY: onboard
+onboard: ## Open the OpenClaw onboarding wizard (interactive)
+	@$(OS_ENV) && openshell sandbox connect nemoclaw-main
+
+.PHONY: post-onboard
+post-onboard: ## Finish setup after onboarding: start gateway + forward + approve devices
+	@echo "=== Starting OpenClaw gateway ==="
+	@$(OS_ENV) && $(SSH_SANDBOX) \
+		'pgrep -f "openclaw gateway" > /dev/null && echo "Already running" || \
+		(openclaw gateway run > /tmp/gateway.log 2>&1 & sleep 3 && echo "OpenClaw gateway started")'
+	@echo ""
+	@echo "=== Starting port forward ==="
+	@$(OS_ENV) && openshell forward start 18789 nemoclaw-main --background 2>/dev/null; true
+	@sleep 2
+	@echo ""
+	@echo "=== Adding Tailscale origin to allowed list ==="
+	@$(OS_ENV) && $(SSH_SANDBOX) 'python3 -c "\
+import json\n\
+f = \"/sandbox/.openclaw/openclaw.json\"\n\
+d = json.load(open(f))\n\
+ui = d.setdefault(\"gateway\", {}).setdefault(\"controlUi\", {})\n\
+origins = ui.setdefault(\"allowedOrigins\", [])\n\
+for o in [\"https://spark-caeb.tail48bab7.ts.net\", \"http://127.0.0.1:18789\"]:\n\
+    if o not in origins: origins.append(o)\n\
+d[\"gateway\"][\"trustedProxies\"] = [\"127.0.0.1\", \"::1\"]\n\
+json.dump(d, open(f, \"w\"), indent=2)\n\
+print(\"Origins + proxies configured\")\n\
+"' 2>&1
+	@echo ""
+	@echo "=== Restarting gateway with new config ==="
+	@$(OS_ENV) && $(SSH_SANDBOX) \
+		'pkill -f "openclaw gateway" ; sleep 2 ; openclaw gateway run > /tmp/gateway.log 2>&1 & sleep 3 && echo "Restarted"'
+	@echo ""
+	@echo "=== Configuring Codex sandbox ==="
+	@$(OS_ENV) && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+		-o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name codex-dev" \
+		sandbox@openshell-codex-dev '\
+mkdir -p ~/.codex && \
+cat > ~/.codex/config.toml << TOML\n\
+model = "nemotron-3-super:120b"\n\
+model_provider = "nemoclaw"\n\
+approval_policy = "never"\n\
+sandbox_mode = "danger-full-access"\n\
+suppress_unstable_features_warning = true\n\
+\n\
+[model_providers.nemoclaw]\n\
+name = "NemoClaw Local"\n\
+base_url = "https://inference.local/v1"\n\
+env_key = "OPENAI_API_KEY"\n\
+TOML\n\
+echo "export OPENAI_API_KEY=unused" >> ~/.bashrc && \
+cd /sandbox && git init 2>/dev/null && git config user.email "sandbox@nemoclaw" && git config user.name "sandbox" && \
+echo "Codex configured"' 2>&1
+	@echo ""
+	@echo "=== Installing Gemini CLI ==="
+	@$(OS_ENV) && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+		-o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name gemini-dev" \
+		sandbox@openshell-gemini-dev '\
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global && \
+export PATH=~/.npm-global/bin:$$PATH && \
+npm install -g @google/gemini-cli 2>&1 | tail -1 && \
+echo "export PATH=~/.npm-global/bin:\$$PATH" >> ~/.bashrc && \
+echo "Gemini CLI installed"' 2>&1
+	@echo ""
+	@echo "=== Done ==="
+	@echo "  UI: https://spark-caeb.tail48bab7.ts.net/"
+	@echo "  Status: make status"
+	@echo "  Mac node: run 'make mac-approve' after Mac node host connects"
+
+.PHONY: mac-approve
+mac-approve: ## Approve pending Mac node pairing requests
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+PENDING=$$(openclaw devices list 2>&1 | grep -oP "^│ \K[a-f0-9-]+" | head -1); \
+if [ -n "$$PENDING" ]; then \
+    openclaw devices approve $$PENDING 2>&1 | tail -1; \
+else \
+    echo "No pending devices"; \
+fi'
+
+# ===========================================================================
 # Start & Stop
 # ===========================================================================
 
