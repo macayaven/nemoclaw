@@ -107,7 +107,7 @@ graph TB
         SB2["sandbox: claude-dev\nClaude Code"]
         SB3["sandbox: codex-dev\nCodex CLI"]
         SB4["sandbox: gemini-dev\nGemini CLI"]
-        Orch["Orchestrator\nOpenAI Agents SDK\nvenv: ~/orchestrator-env"]
+        Orch["Orchestrator\nPython package CLI\nvenv: ~/orchestrator-env"]
         GW --> IL
         IL --> Ollama_S
         IL --> LMS_S

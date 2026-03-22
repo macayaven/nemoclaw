@@ -146,7 +146,11 @@ The orchestrator calls specialists as tools and retains control of the conversat
 **B) Handoff Pattern**
 The orchestrator hands conversation control to a specialist, which takes over until done.
 
-### Implementation with OpenAI Agents SDK
+### Optional example: OpenAI Agents SDK
+
+The current repository implementation uses the checked-in `orchestrator/`
+package and `python -m orchestrator` CLI. The example below is an alternative
+pattern, not the runtime that is currently shipped in this repo.
 
 ```python
 # orchestrator.py — runs on the Spark, outside sandboxes
@@ -402,7 +406,9 @@ The simplest cooperation pattern — mount the same directory into multiple sand
 
 ## Implementation Roadmap
 
-This is a **future enhancement** — not yet implemented in the current deployment. The recommended path:
+Shared MCP remains an optional enhancement. The lightweight orchestrator itself
+is already implemented in the current repository as the `orchestrator/`
+package. The recommended path:
 
 ### Phase A: Shared MCP (after Phase 4 deployment)
 
@@ -411,11 +417,11 @@ This is a **future enhancement** — not yet implemented in the current deployme
 3. Configure each agent's MCP settings
 4. Test: Claude writes a file, Codex reads it
 
-### Phase B: Orchestrator (after Phase A working)
+### Phase B: Orchestrator hardening (current repo path)
 
-1. Install OpenAI Agents SDK on the Spark
-2. Create bridge tools (`run_in_sandbox()`)
-3. Build orchestrator agent with specialist tools
+1. Use the checked-in `orchestrator/` package on the Spark
+2. Extend bridge tools and task routing where needed
+3. Validate `python -m orchestrator` commands and Phase 6 tests
 4. Test: orchestrator delegates a code task across agents
 
 ### Phase C: Advanced Patterns
