@@ -1504,6 +1504,52 @@ openshell forward start 18789 nemoclaw-main --background
 */5 * * * * ss -tlnp | grep -q 18789 || (source ~/workspace/nemoclaw/openshell-env/bin/activate && openshell forward start 18789 nemoclaw-main --background)
 ```
 
+### Web UI origin blocking
+
+When accessing the OpenClaw dashboard via Tailscale Serve (`https://spark-caeb.tail48bab7.ts.net`), you may see "origin not allowed." The gateway rejects WebSocket connections from origins not in its allowlist.
+
+**Fix:** Add the Tailscale Serve domain to the gateway config inside the sandbox:
+
+```bash
+openshell sandbox connect nemoclaw-main
+python3 -c "
+import json
+f = '/sandbox/.openclaw/openclaw.json'
+d = json.load(open(f))
+ui = d.setdefault('gateway', {}).setdefault('controlUi', {})
+origins = ui.setdefault('allowedOrigins', [])
+for o in ['https://spark-caeb.tail48bab7.ts.net', 'http://127.0.0.1:18789']:
+    if o not in origins: origins.append(o)
+json.dump(d, open(f, 'w'), indent=2)
+"
+# Restart gateway to apply
+pkill -f 'openclaw gateway' ; sleep 2 ; openclaw gateway run > /tmp/gateway.log 2>&1 &
+```
+
+### Device pairing for browsers and companion apps
+
+Every new client (browser, Mac node host, iOS app) that connects to the gateway creates a **device pairing request**. The gateway rejects the connection until you approve it.
+
+**Flow:**
+1. Client connects and gets "pairing required"
+2. On the Spark, inside the sandbox, run `openclaw devices list` to see pending requests
+3. Approve with `openclaw devices approve <request-id>`
+4. Client reconnects and works
+
+**Important:** Use `openclaw devices list/approve`, NOT `openclaw nodes list`. The `devices` command handles pairing; `nodes` shows already-paired devices.
+
+**For the Mac node host**, the `OPENCLAW_GATEWAY_TOKEN` env var must be set. Add it to the launchd plist for persistence:
+
+```bash
+python3 -c "
+import plistlib
+p = '$HOME/Library/LaunchAgents/ai.openclaw.node.plist'
+with open(p, 'rb') as f: plist = plistlib.load(f)
+plist.setdefault('EnvironmentVariables', {})['OPENCLAW_GATEWAY_TOKEN'] = '<token>'
+with open(p, 'wb') as f: plistlib.dump(plist, f)
+"
+```
+
 ---
 
 ## 7. Tools Available

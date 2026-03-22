@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>4 AI Agents, 1 Orchestrator, Zero Cloud: Practical Workflows with NemoClaw</title>
+  <style>
+    /* ------------------------------------------------------------------ */
+    /* Reset & base                                                         */
+    /* ------------------------------------------------------------------ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { font-size: 18px; }
+
+    body {
+      font-family: "Georgia", "Times New Roman", serif;
+      background: #fff;
+      color: #1a1a1a;
+      line-height: 1.75;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Layout                                                              */
+    /* ------------------------------------------------------------------ */
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 60px 24px 120px;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Typography                                                          */
+    /* ------------------------------------------------------------------ */
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: #555;
+      font-style: italic;
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+
+    .byline {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      font-size: 0.78rem;
+      color: #888;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 48px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid #e8e8e8;
+    }
+
+    .byline a { color: #888; }
+
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-top: 60px;
+      margin-bottom: 20px;
+      letter-spacing: -0.01em;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-top: 36px;
+      margin-bottom: 12px;
+    }
+
+    p {
+      margin-bottom: 22px;
+    }
+
+    a { color: #0a6a3e; }
+    a:hover { text-decoration: underline; }
+
+    strong { font-weight: 700; }
+    em { font-style: italic; }
+
+    /* ------------------------------------------------------------------ */
+    /* Lists                                                               */
+    /* ------------------------------------------------------------------ */
+    ul, ol {
+      margin-left: 28px;
+      margin-bottom: 22px;
+    }
+
+    li { margin-bottom: 6px; }
+
+    /* TL;DR bullet list */
+    .tldr {
+      background: #f7f9f7;
+      border-left: 4px solid #0a6a3e;
+      padding: 20px 24px;
+      margin-bottom: 40px;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .tldr ul {
+      margin-left: 20px;
+      margin-bottom: 0;
+    }
+
+    .tldr li {
+      margin-bottom: 10px;
+      font-size: 0.95rem;
+    }
+
+    .tldr li:last-child { margin-bottom: 0; }
+
+    /* ------------------------------------------------------------------ */
+    /* Code blocks                                                         */
+    /* ------------------------------------------------------------------ */
+    pre {
+      font-family: "SFMono-Regular", "Cascadia Code", "Fira Code", "Menlo",
+                   "Consolas", "Liberation Mono", monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 22px 24px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin-bottom: 24px;
+      white-space: pre;
+      tab-size: 2;
+    }
+
+    code {
+      font-family: "SFMono-Regular", "Cascadia Code", "Fira Code", "Menlo",
+                   "Consolas", "Liberation Mono", monospace;
+      font-size: 0.82em;
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #c7254e;
+    }
+
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Tables                                                              */
+    /* ------------------------------------------------------------------ */
+    .table-wrap {
+      overflow-x: auto;
+      margin-bottom: 28px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      font-size: 0.83rem;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 2px solid #e0e0e0;
+      font-weight: 700;
+      color: #444;
+    }
+
+    tbody td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+
+    tbody tr:nth-child(even) { background: #fafafa; }
+
+    /* ------------------------------------------------------------------ */
+    /* Privacy boundary diagram                                            */
+    /* ------------------------------------------------------------------ */
+    .diagram {
+      font-family: "SFMono-Regular", "Cascadia Code", "Fira Code", "Menlo",
+                   "Consolas", "Liberation Mono", monospace;
+      font-size: 0.76rem;
+      background: #f4f4f4;
+      border: 1px solid #ddd;
+      padding: 20px 24px;
+      border-radius: 6px;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.55;
+      margin-bottom: 24px;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Separators                                                          */
+    /* ------------------------------------------------------------------ */
+    hr {
+      border: none;
+      border-top: 1px solid #e8e8e8;
+      margin: 56px 0;
+    }
+
+    /* Section divider dots */
+    .dots {
+      text-align: center;
+      color: #ccc;
+      font-size: 1.5rem;
+      letter-spacing: 12px;
+      margin: 48px 0;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Callout boxes                                                       */
+    /* ------------------------------------------------------------------ */
+    .callout {
+      background: #fffbf0;
+      border-left: 4px solid #f0a500;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      border-radius: 0 4px 4px 0;
+      font-size: 0.93rem;
+    }
+
+    .callout strong { color: #7a5200; }
+
+    /* ------------------------------------------------------------------ */
+    /* Footer                                                              */
+    /* ------------------------------------------------------------------ */
+    footer {
+      margin-top: 80px;
+      padding-top: 32px;
+      border-top: 1px solid #e8e8e8;
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      font-size: 0.8rem;
+      color: #999;
+      line-height: 1.6;
+    }
+
+    footer a { color: #999; }
+
+    /* ------------------------------------------------------------------ */
+    /* Responsive                                                          */
+    /* ------------------------------------------------------------------ */
+    @media (max-width: 720px) {
+      html { font-size: 16px; }
+      h1 { font-size: 1.6rem; }
+      pre { font-size: 0.72rem; padding: 16px 16px; }
+      .diagram { font-size: 0.67rem; padding: 14px 14px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ================================================================ -->
+  <!-- Header                                                            -->
+  <!-- ================================================================ -->
+  <h1>4 AI Agents, 1 Orchestrator, Zero Cloud: Practical Workflows with NemoClaw</h1>
+
+  <p class="subtitle">
+    From code review pipelines to research-driven development — real workflows
+    using local Nemotron&nbsp;120B, Claude&nbsp;Code, Codex, and Gemini&nbsp;CLI
+  </p>
+
+  <p class="byline">
+    Carlos Macaya &middot; March 2026 &middot;
+    Part 2 of the NemoClaw series &mdash;
+    <a href="part1-deployment.html">Part 1: Deployment</a>
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- TL;DR                                                             -->
+  <!-- ================================================================ -->
+  <div class="tldr">
+    <strong>TL;DR</strong>
+    <ul>
+      <li>NemoClaw's four sandboxed agents (OpenClaw, Claude Code, Codex, Gemini CLI) serve distinct roles and can be chained into automated pipelines.</li>
+      <li>Codex and OpenClaw route all inference through local Nemotron 120B on the DGX Spark — your code never leaves the hardware.</li>
+      <li>Claude Code and Gemini CLI use their respective cloud APIs, but remain in network-isolated sandboxes with explicit policy allowlists.</li>
+      <li>The <code>Orchestrator</code> class coordinates sequential and parallel agent workflows with a simple Python API: <code>orc.research_and_implement("...")</code>.</li>
+      <li>LiteLLM on the Raspberry Pi provides a single OpenAI-compatible endpoint that routes to any model by name, making the system accessible from Jupyter, VS Code, and custom scripts.</li>
+    </ul>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Recap                                                             -->
+  <!-- ================================================================ -->
+  <h2>Recap: What Was Deployed in Part 1</h2>
+
+  <p>
+    <a href="part1-deployment.html">Part 1</a> built the following across three physical machines.
+  </p>
+
+  <p>
+    <strong>DGX Spark</strong> (GB10 Blackwell, 128&nbsp;GB UMA) — runs four isolated OpenShell sandboxes
+    housing OpenClaw, Claude Code, Codex, and Gemini CLI. Ollama serves Nemotron 120B and
+    Qwen Coder at <code>localhost:11434</code>. LM Studio provides an alternate inference server
+    at <code>:1234</code>. The OpenShell gateway intercepts all sandbox network traffic, enforces
+    YAML-defined policies, and routes inference through <code>inference.local</code> — a virtual
+    TLS endpoint that resolves only inside sandboxes.
+  </p>
+
+  <p>
+    <strong>Mac Studio M4 Max</strong> (36&nbsp;GB unified memory) — runs Qwen3 8B via Ollama,
+    managed by Cursor IDE. A small Python TCP forwarder exposes it on <code>0.0.0.0:11435</code>
+    so the Spark can reach it without disrupting Cursor's <code>localhost:11434</code> binding.
+  </p>
+
+  <p>
+    <strong>Raspberry Pi</strong> — the infrastructure layer. LiteLLM runs as a systemd service
+    and exposes a unified OpenAI-compatible API at <code>:4000</code> that routes to any model
+    on any machine by name. Pi-hole handles local DNS so you can use <code>spark.lab</code>,
+    <code>mac.lab</code>, and <code>ai.lab</code> instead of Tailscale IPs. Uptime Kuma monitors
+    all five service endpoints. A Tailscale subnet router makes the full <code>192.168.1.0/24</code>
+    LAN visible to all Tailscale devices.
+  </p>
+
+  <p>
+    All three machines are connected through a Tailscale mesh VPN, and the OpenClaw UI is
+    accessible over HTTPS at <code>https://spark-caeb.tail48bab7.ts.net/</code>.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Privacy Boundary                                                  -->
+  <!-- ================================================================ -->
+  <h2>The Privacy Boundary</h2>
+
+  <p>
+    Before covering individual workflows, it is worth being explicit about which agents send
+    data to external servers.
+  </p>
+
+<div class="diagram">YOUR NETWORK (stays private)             CLOUD (data leaves)
+=====================================================|===========================
+                                                    |
+  [DGX Spark]                                       |
+    Ollama: Nemotron 120B &lt;---+                     |
+    Ollama: Qwen Coder    &lt;---+                     |
+                              |                     |
+  [Mac Studio]                |                     |
+    Ollama: Qwen3 8B    &lt;-----+                     |
+                              |                     |
+  Sandboxes:                  |                     |
+    OpenClaw  ----------------+ local inference     |
+    Codex     ----------------+ local inference     |
+                                                    |  Claude Code --&gt; Anthropic API
+                                                    |  Gemini CLI  --&gt; Google API
+                                                    |
+=====================================================|===========================</div>
+
+  <p>
+    OpenClaw and Codex are wired to use <code>inference.local</code>, the gateway's internal
+    proxy, which routes to whatever local provider is currently active. Both agents are
+    structurally incapable of reaching the public internet for inference — the sandbox network
+    policy does not permit it.
+  </p>
+
+  <p>
+    Claude Code connects to <code>api.anthropic.com</code>. Gemini CLI connects to
+    <code>generativelanguage.googleapis.com</code>. Both sandboxes have explicit allowlists
+    for those endpoints and nothing else. If Claude Code tries to reach an endpoint outside
+    its policy, the gateway blocks the request and surfaces it in the <code>openshell term</code>
+    TUI for your approval.
+  </p>
+
+  <div class="callout">
+    <strong>Rule of thumb:</strong> Never put proprietary source code, internal API schemas,
+    or customer data into a Claude or Gemini prompt without understanding that it will be
+    sent to a third-party API. For anything sensitive, use the Codex or OpenClaw sandboxes
+    exclusively. For research, competitive analysis, or questions about public libraries —
+    Claude and Gemini are fine.
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 1                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 1: Pure Local Code Review (Codex + OpenClaw)</h2>
+
+  <p>
+    <strong>The scenario:</strong> You have a code change that contains business logic you
+    cannot share externally. You want AI-assisted review with absolute certainty that nothing
+    leaves your network.
+  </p>
+
+  <p>
+    This is the default path: Codex handles code analysis inside its sandbox, routing inference
+    through <code>inference.local</code> to Nemotron 120B on the Spark. No packet leaves the
+    <code>192.168.1.0/24</code> subnet.
+  </p>
+
+  <h3>Step 1: Connect to the Codex sandbox</h3>
+
+<pre><code>source ~/workspace/nemoclaw/openshell-env/bin/activate
+openshell sandbox connect codex-dev</code></pre>
+
+  <p>
+    You are now inside an isolated container. The filesystem is <code>/sandbox</code>. Network
+    access is limited to <code>inference.local</code> and <code>host.openshell.internal:11434</code>
+    (the Ollama API). Codex's config at <code>~/.codex/config.toml</code> points directly to
+    the local model:
+  </p>
+
+<pre><code>model = "nemotron-3-super:120b"
+model_provider = "ollama"
+
+[model_providers.ollama]
+name = "Ollama (Spark Local)"
+base_url = "http://host.openshell.internal:11434/v1"
+wire_api = "responses"</code></pre>
+
+  <h3>Step 2: Run the review</h3>
+
+<pre><code># Inside codex-dev sandbox — Codex requires a git repo in the working directory
+cd ~/projects/myproject
+codex "Review auth_service.py for security vulnerabilities, \
+race conditions, and missing error handling"</code></pre>
+
+  <p>
+    Codex reads the file, sends the contents and your prompt to Nemotron 120B via Ollama's
+    REST API at <code>host.openshell.internal:11434</code>, and streams the response back.
+    The inference stays on the Spark's GPU.
+  </p>
+
+  <h3>Step 3: Chain to OpenClaw for a summarized action list</h3>
+
+<pre><code>source ~/workspace/nemoclaw/orchestrator-env/bin/activate
+python3 - &lt;&lt; 'EOF'
+from orchestrator import Orchestrator
+
+orc = Orchestrator()
+
+code = open("/path/to/auth_service.py").read()
+review = orc.delegate(
+    f"Review this Python code for security issues:\n\n{code}",
+    agent="codex",
+    task_type="code_review",
+)
+summary = orc.delegate(
+    f"Summarize this code review into a prioritized action list:\n\n{review}",
+    agent="openclaw",
+    task_type="analysis",
+)
+print(summary)
+EOF</code></pre>
+
+  <p>
+    The Orchestrator's <code>delegate()</code> method creates a task record, dispatches the
+    prompt into the target sandbox via <code>SandboxBridge</code>, and returns the response
+    as a string. Both hops stay local.
+  </p>
+
+  <p>
+    Enterprise codebases — financial systems, medical software, anything under NDA — cannot
+    use cloud AI for code review without legal review of the vendor's data handling policies.
+    Local inference eliminates the question entirely. Nemotron 120B is competitive with
+    frontier models on code analysis tasks, and the latency tradeoff is acceptable when
+    the alternative is sending proprietary code to a third-party API.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 2                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 2: Research-Driven Implementation (Gemini + Codex + Claude)</h2>
+
+  <p>
+    <strong>The scenario:</strong> You need to add a new feature but are not sure about the
+    best approach. Research is not sensitive — it is about public APIs and design patterns.
+    The actual implementation is sensitive because it contains your business logic.
+  </p>
+
+  <p>
+    The hybrid strategy: Gemini researches (cloud is fine, nothing proprietary in a research
+    question), Codex implements (local, sensitive code stays on hardware), Claude reviews
+    (cloud, but at this point you are sending general code patterns, not internal data).
+  </p>
+
+  <p>
+    The orchestrator's <code>research_and_implement()</code> pipeline automates this flow.
+    Here is the relevant source from <code>orchestrator/orchestrator.py</code>:
+  </p>
+
+<pre><code>def research_and_implement(self, prompt: str) -&gt; PipelineResult:
+    steps = [
+        PipelineStep(
+            agent="gemini",
+            task_type="research",
+            prompt_template=(
+                "Research the following topic thoroughly and provide a comprehensive "
+                "summary of best practices, available libraries, and implementation "
+                "strategies:\n\n{prev_result}"
+            ),
+        ),
+        PipelineStep(
+            agent="codex",
+            task_type="code_generation",
+            prompt_template=(
+                "Based on the following research, implement a complete, working "
+                "solution with clear comments:\n\n"
+                "Original request: {step_0_prompt}\n\n"
+                "Research findings:\n{step_1_result}"
+            ),
+        ),
+        PipelineStep(
+            agent="claude",
+            task_type="code_review",
+            prompt_template=(
+                "Review the following implementation for correctness, security, "
+                "performance, and style. Provide specific, actionable feedback:\n\n"
+                "{prev_result}"
+            ),
+        ),
+    ]
+    return self.pipeline(prompt, steps)</code></pre>
+
+  <p>
+    Each step's output is threaded into the next via the <code>{prev_result}</code> placeholder.
+    Historical step outputs are also available as <code>{step_N_result}</code> tokens, letting
+    later steps reference earlier ones by index.
+  </p>
+
+  <h3>Running it</h3>
+
+<pre><code>source ~/workspace/nemoclaw/orchestrator-env/bin/activate
+python3 - &lt;&lt; 'EOF'
+from orchestrator import Orchestrator
+
+orc = Orchestrator()
+result = orc.research_and_implement(
+    "Build a Python rate limiter using a sliding window algorithm"
+)
+
+print(f"Total time: {result.total_duration_ms:.0f}ms")
+print(f"\nStep durations:")
+for step in result.steps:
+    print(f"  {step.agent} ({step.task_type}): {step.duration_ms:.0f}ms")
+
+print(f"\nFinal review:\n{result.final_output}")
+EOF</code></pre>
+
+  <p>Sample output:</p>
+
+<pre><code>Total time: 94320ms
+
+Step durations:
+  gemini (research): 8210ms
+  codex (code_generation): 52400ms
+  claude (code_review): 33710ms
+
+Final review:
+The implementation looks solid. A few notes:
+- Line 23: `time.time()` can have floating-point precision issues under load;
+  prefer `time.monotonic_ns()` for the window boundary comparison.
+- The `cleanup_old_entries()` method is called on every request — consider
+  moving it to a background thread or caching the result for N ms.
+- Missing type annotations on the public API. Add `-> bool` to `is_allowed()`.</code></pre>
+
+  <p>
+    If the implementation code contains internal service names, credentials, or business
+    logic specifics, strip those before the Claude review step. The orchestrator's pipeline
+    API makes it straightforward to add a sanitization step in between.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 3                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 3: Model Comparison (Parallel Specialists)</h2>
+
+  <p>
+    <strong>The scenario:</strong> You want to understand the quality versus speed tradeoff
+    between Nemotron 120B (the heavy model on the Spark) and Qwen3 8B (the fast model on
+    the Mac). You send the same prompt to both simultaneously and compare.
+  </p>
+
+  <p>
+    The orchestrator's <code>parallel_specialists()</code> method uses a
+    <code>ThreadPoolExecutor</code> to dispatch prompts concurrently. Errors from individual
+    agents are captured as error strings in the returned dict rather than propagating, so
+    one slow or failing agent does not block the others.
+  </p>
+
+<pre><code>source ~/workspace/nemoclaw/orchestrator-env/bin/activate
+python3 - &lt;&lt; 'EOF'
+from orchestrator import Orchestrator
+import time
+
+orc = Orchestrator()
+
+prompt = """
+Explain the difference between a mutex and a semaphore.
+Include a practical Python example for each.
+"""
+
+t_start = time.monotonic()
+responses = orc.parallel_specialists(
+    prompt,
+    agents=["openclaw", "gemini"],  # openclaw -&gt; Nemotron 120B; gemini -&gt; Gemini
+    task_type="analysis",
+)
+elapsed = (time.monotonic() - t_start) * 1000
+print(f"Both responded in: {elapsed:.0f}ms\n")
+
+for agent, response in responses.items():
+    print(f"=== {agent.upper()} ===")
+    print(response[:600])
+    print()
+EOF</code></pre>
+
+  <p>
+    To compare local Nemotron 120B against local Qwen3 8B, switch the active provider
+    before running the second delegation:
+  </p>
+
+<pre><code># Switch to Mac's fast model
+openshell inference set --provider mac-ollama --model qwen3:8b
+
+# Run the same prompt through openclaw (now backed by Qwen3 8B)
+python3 - &lt;&lt; 'EOF'
+from orchestrator import Orchestrator
+orc = Orchestrator()
+fast_response = orc.delegate(
+    "Explain mutex vs semaphore with Python examples",
+    agent="openclaw",
+)
+print(fast_response)
+EOF
+
+# Switch back to 120B for subsequent work
+openshell inference set --provider local-ollama --model nemotron-3-super:120b</code></pre>
+
+  <p>Switching takes roughly five seconds. No sandbox restart is needed.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Model</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Complex reasoning, architecture questions</td>
+          <td>Nemotron 120B</td>
+          <td>Depth of analysis</td>
+        </tr>
+        <tr>
+          <td>Quick one-liners, syntax questions</td>
+          <td>Qwen3 8B (Mac)</td>
+          <td>Sub-second latency</td>
+        </tr>
+        <tr>
+          <td>Code generation from detailed specs</td>
+          <td>Qwen Coder (Spark)</td>
+          <td>Code-tuned, fully local</td>
+        </tr>
+        <tr>
+          <td>Web research, long-context summarization</td>
+          <td>Gemini CLI</td>
+          <td>Large context window, web access</td>
+        </tr>
+        <tr>
+          <td>Code review with deep feedback</td>
+          <td>Claude Code</td>
+          <td>Strong reasoning and style analysis</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The Spark carries both Nemotron 120B (~86&nbsp;GB) and Qwen Coder (~51&nbsp;GB). Loading
+    both simultaneously would exceed the 128&nbsp;GB UMA budget. In practice, keep one loaded
+    and cold-start the other when needed — Ollama unloads the resident model automatically
+    when a new one is requested.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 4                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 4: Automated Code Fix Pipeline (Claude + Codex)</h2>
+
+  <p>
+    <strong>The scenario:</strong> You hand a file to the pipeline and want it to come back
+    reviewed, fixed, and re-reviewed — without manual intervention between steps.
+  </p>
+
+  <p>
+    The <code>code_review_pipeline()</code> method runs a three-step loop: Claude reviews,
+    Codex applies the fixes, Claude re-reviews the corrected version.
+  </p>
+
+<pre><code>def code_review_pipeline(self, code: str) -&gt; PipelineResult:
+    steps = [
+        PipelineStep(
+            agent="claude",
+            task_type="code_review",
+            prompt_template=(
+                "Review the following code carefully. List all bugs, anti-patterns, "
+                "security issues, and style violations with specific line references "
+                "where possible:\n\n{prev_result}"
+            ),
+        ),
+        PipelineStep(
+            agent="codex",
+            task_type="code_generation",
+            prompt_template=(
+                "Apply the following code review feedback to improve the code. "
+                "Return the complete corrected source file:\n\n"
+                "Original code:\n{step_0_prompt}\n\n"
+                "Review feedback:\n{step_1_result}"
+            ),
+        ),
+        PipelineStep(
+            agent="claude",
+            task_type="code_review",
+            prompt_template=(
+                "Perform a final review of this revised code. Confirm that all "
+                "previous issues have been addressed and identify any remaining "
+                "concerns:\n\n{prev_result}"
+            ),
+        ),
+    ]
+    return self.pipeline(code, steps)</code></pre>
+
+  <h3>Running it on a file</h3>
+
+<pre><code>source ~/workspace/nemoclaw/orchestrator-env/bin/activate
+python3 - &lt;&lt; 'EOF'
+from orchestrator import Orchestrator
+
+orc = Orchestrator()
+code = open("/sandbox/myproject/auth_service.py").read()
+
+result = orc.code_review_pipeline(code)
+
+print("=== INITIAL REVIEW ===")
+print(result.steps[0].output)
+
+print("\n=== FIXED CODE ===")
+print(result.steps[1].output)
+
+print("\n=== FINAL REVIEW ===")
+print(result.steps[2].output)
+
+print(f"\nPipeline completed in {result.total_duration_ms/1000:.1f}s")
+EOF</code></pre>
+
+  <p>
+    The <code>{step_0_prompt}</code> placeholder — which resolves to the original code —
+    is passed explicitly into the Codex fix step so that Codex has both the original code
+    and Claude's review comments. Without this, Codex would only see the review comments
+    with no code to fix.
+  </p>
+
+  <p>
+    This pattern works well as a pre-commit quality gate. Wire it into a git pre-commit hook:
+    if the final Claude review contains critical issues, exit non-zero and block the commit.
+    The current pipeline runs one review-fix-review cycle. For more aggressive enforcement,
+    run the pipeline in a loop until the final review contains no critical findings.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 5                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 5: LiteLLM as Universal API (Any Client)</h2>
+
+  <p>
+    <strong>The scenario:</strong> You want to call any NemoClaw model from a Jupyter notebook,
+    a VS Code extension, or a custom script — using the standard OpenAI Python client —
+    without touching sandbox configuration.
+  </p>
+
+  <p>
+    The Raspberry Pi runs LiteLLM as a proxy that routes by model name. One endpoint,
+    any model.
+  </p>
+
+  <h3>From Python</h3>
+
+<pre><code>from openai import OpenAI
+
+# Point at the Pi's LiteLLM proxy — same interface as the OpenAI API
+client = OpenAI(
+    base_url="http://100.85.6.21:4000/v1",
+    api_key="unused",
+)
+
+# Routes to Nemotron 120B on the Spark
+response = client.chat.completions.create(
+    model="nemotron-3-super:120b",
+    messages=[{"role": "user", "content": "What is CUDA unified memory?"}],
+)
+print(response.choices[0].message.content)
+
+# Switch to the Mac's fast model by changing only the model name
+response = client.chat.completions.create(
+    model="qwen3:8b",
+    messages=[{"role": "user", "content": "Quick: what does enumerate() do?"}],
+)
+print(response.choices[0].message.content)</code></pre>
+
+  <h3>From curl</h3>
+
+<pre><code># Check what models are available
+curl http://100.85.6.21:4000/v1/models
+
+# Chat with Nemotron 120B
+curl http://100.85.6.21:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nemotron-3-super:120b",
+    "messages": [{"role": "user", "content": "Explain gradient checkpointing"}]
+  }'
+
+# Route to the Mac model (sub-second latency)
+curl http://100.85.6.21:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3:8b", "messages": [{"role": "user", "content": "ping"}]}'</code></pre>
+
+  <p>LiteLLM's routing config on the Pi maps model names to backends:</p>
+
+<pre><code>model_list:
+  - model_name: "nemotron-3-super:120b"
+    litellm_params:
+      model: "ollama/nemotron-3-super:120b"
+      api_base: "http://100.93.220.104:11434"
+
+  - model_name: "qwen3-coder-next:q4_K_M"
+    litellm_params:
+      model: "ollama/qwen3-coder-next:q4_K_M"
+      api_base: "http://100.93.220.104:11434"
+
+  - model_name: "qwen3:8b"
+    litellm_params:
+      model: "ollama/qwen3:8b"
+      api_base: "http://100.116.228.36:11435"</code></pre>
+
+  <p>
+    Adding a new model requires one entry in this YAML and <code>sudo systemctl reload litellm</code>.
+    No client changes needed.
+  </p>
+
+  <p>
+    Any VS Code extension that accepts an OpenAI-compatible base URL can be pointed at
+    <code>http://100.85.6.21:4000/v1</code>. Your inference traffic stays on your LAN;
+    the extension vendor never sees your prompts.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Scenario 6                                                        -->
+  <!-- ================================================================ -->
+  <h2>Scenario 6: Mobile Agent Access</h2>
+
+  <p>
+    <strong>The scenario:</strong> You are away from your desk and want a quick answer from
+    Nemotron 120B — not a small cloud model, your own hardware.
+  </p>
+
+  <p>
+    Tailscale handles the connectivity. The Spark runs
+    <code>tailscale serve --bg 18789</code>, which creates
+    <code>https://spark-caeb.tail48bab7.ts.net/</code> pointing to the OpenClaw UI. Any
+    device on your Tailscale network — including your phone — can reach it.
+  </p>
+
+  <p>
+    From an iPhone: install the Tailscale app, sign in with the same account, open Safari
+    and navigate to <code>https://spark-caeb.tail48bab7.ts.net/</code>. The OpenClaw chat
+    interface loads. Type your question. Nemotron 120B answers.
+  </p>
+
+  <p>
+    The Spark does all the inference. The phone only renders the response. Even on a slow
+    mobile connection, the bottleneck is Nemotron's generation speed, not the network —
+    Tailscale latency on a home network is typically under 10ms.
+  </p>
+
+  <div class="callout">
+    <strong>Access model matters:</strong> <code>tailscale serve</code> requires Tailscale
+    device authentication. Only devices you have approved in the Tailscale admin panel can
+    reach the URL. This is meaningfully different from <code>tailscale funnel</code>,
+    which makes the endpoint public. Stay on <code>serve</code> unless you have a specific
+    reason to share access externally.
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Advanced: The Orchestrator Pattern                                -->
+  <!-- ================================================================ -->
+  <h2>Advanced: The Orchestrator Pattern</h2>
+
+  <p>
+    The six scenarios above use the orchestrator as a convenience layer. This section
+    explains how it works and when to extend it.
+  </p>
+
+  <h3>Manager Pattern vs Handoff Pattern</h3>
+
+  <p>
+    NemoClaw's orchestrator uses the Manager pattern from the OpenAI Agents SDK. The
+    orchestrator retains control of the conversation at all times: it calls specialists
+    as tools, gets back results, and decides what to do next.
+  </p>
+
+  <p>
+    The alternative — the Handoff pattern — transfers control to a specialist, which runs
+    autonomously until it decides to hand back. The Handoff pattern is harder to debug and
+    can produce longer, less predictable loops. For deterministic pipelines like code review,
+    the Manager pattern is the right choice.
+  </p>
+
+  <h3>Building a Custom Pipeline</h3>
+
+  <p>
+    The <code>pipeline()</code> method accepts any sequence of <code>PipelineStep</code>
+    objects. Here is a custom pipeline that inserts a security research step before
+    implementation:
+  </p>
+
+<pre><code>from orchestrator import Orchestrator, PipelineStep
+
+orc = Orchestrator()
+
+steps = [
+    PipelineStep(
+        agent="gemini",
+        task_type="research",
+        prompt_template="Research OWASP top 10 mitigations for:\n\n{prev_result}",
+    ),
+    PipelineStep(
+        agent="codex",
+        task_type="code_generation",
+        prompt_template=(
+            "Implement with security mitigations from this research:\n"
+            "Feature: {step_0_prompt}\n"
+            "Security guidance:\n{step_1_result}"
+        ),
+    ),
+    PipelineStep(
+        agent="openclaw",      # Local — no cloud
+        task_type="analysis",
+        prompt_template=(
+            "Perform a security-focused review of this implementation. "
+            "Reference OWASP where relevant:\n\n{prev_result}"
+        ),
+    ),
+    PipelineStep(
+        agent="claude",
+        task_type="code_review",
+        prompt_template=(
+            "Final review — address any remaining issues:\n\n{prev_result}"
+        ),
+    ),
+]
+
+result = orc.pipeline(
+    "Build a user authentication endpoint with JWT",
+    steps,
+)
+print(result.final_output)</code></pre>
+
+  <h3>The Shared Workspace</h3>
+
+  <p>
+    Agents cannot directly read each other's sandbox filesystems. Inter-agent communication
+    happens through a shared MCP workspace — a directory outside all sandboxes, mounted
+    read-write into each one.
+  </p>
+
+<pre><code># Set up shared workspace on the Spark host
+mkdir -p ~/workspace/shared-agents/{inbox,outbox,context}
+
+# Mount it into sandboxes at creation time
+openshell sandbox create --keep --name codex-dev \
+    --upload ~/workspace/shared-agents:/shared \
+    -- bash</code></pre>
+
+  <p>
+    Agents write outputs to <code>/shared/outbox/&lt;agent&gt;/</code>, read context from
+    <code>/shared/context/</code>, and pick up tasks from <code>/shared/inbox/&lt;agent&gt;/</code>.
+    This pattern also enables async workflows: Claude can write a spec to the shared
+    workspace, you walk away, and Codex picks it up when you next connect to its sandbox —
+    without the orchestrator blocking on the response.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Performance Notes                                                 -->
+  <!-- ================================================================ -->
+  <h2>Performance Notes</h2>
+
+  <p>Understanding the latency profile helps set expectations and choose the right model.</p>
+
+  <p>
+    <strong>Nemotron 120B on DGX Spark:</strong> Cold start (model not loaded) takes 30-60
+    seconds for Ollama to load the weights into GPU memory. Warm inference delivers the
+    first token in 3-8 seconds, then roughly 15-25 tokens per second on the GB10 Blackwell.
+    The <code>OLLAMA_KEEP_ALIVE=-1</code> setting keeps the model resident in GPU memory
+    indefinitely, eliminating cold starts during a working session.
+  </p>
+
+  <p>
+    <strong>Qwen3 8B on Mac Studio M4 Max:</strong> Always warm because Cursor IDE keeps
+    it loaded. First token in under one second. Suitable for autocomplete-speed interactions.
+  </p>
+
+  <p>
+    <strong>Codex + Nemotron 120B for code generation:</strong> Expect 45-90 seconds for
+    a non-trivial code generation task. This includes Codex's own agent loop, which may
+    make multiple model calls before returning a final result.
+  </p>
+
+  <p>
+    <strong>LiteLLM routing overhead:</strong> Under 5ms measured. The proxy adds no
+    meaningful latency. The bottleneck is always the model.
+  </p>
+
+  <p>
+    <strong>Tailscale latency (LAN):</strong> Under 10ms between machines on the same
+    physical network. From a mobile device on a home network: typically under 20ms for
+    the network hop.
+  </p>
+
+  <p>
+    <strong>Orchestrator per-step overhead:</strong> The <code>Orchestrator</code> class
+    calls <code>subprocess.run()</code> to dispatch prompts into sandboxes. The subprocess
+    startup and <code>openshell sandbox connect</code> overhead is roughly 500ms per step —
+    negligible compared to model inference latency.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Conclusion                                                        -->
+  <!-- ================================================================ -->
+  <h2>Conclusion: Why Local AI Matters</h2>
+
+  <p>
+    After running NemoClaw across a working session, the practical benefits become clear.
+  </p>
+
+  <p>
+    <strong>Privacy.</strong> Proprietary code, internal architecture diagrams, and customer
+    data never leave the hardware. This is not a policy — it is enforced at the network
+    layer by the OpenShell gateway. An agent physically cannot reach an unapproved endpoint.
+  </p>
+
+  <p>
+    <strong>Control.</strong> You decide what each agent can access: which filesystem paths,
+    which network endpoints, which tools. The YAML policy files are readable and auditable.
+    There is no black box.
+  </p>
+
+  <p>
+    <strong>Cost.</strong> After the hardware investment, inference is free. Nemotron 120B
+    at tens of thousands of tokens per day would be expensive on a cloud API. On hardware
+    you own, it costs electricity.
+  </p>
+
+  <p>
+    <strong>Flexibility.</strong> Adding a new model is <code>ollama pull &lt;model&gt;</code>
+    and one line in the LiteLLM config. Adding a new agent is one
+    <code>openshell sandbox create</code> command. Switching between models takes five
+    seconds without restarting anything.
+  </p>
+
+  <hr>
+
+  <p>
+    <em>
+      Transparency note: This article was written with AI assistance, primarily Claude and
+      Gemini, running inside the NemoClaw system described above. The code samples come
+      directly from the production deployment. The orchestrator output examples are
+      representative of actual timing observed on the DGX Spark hardware.
+    </em>
+  </p>
+
+  <p>
+    The <a href="https://github.com/macayaven/nemoclaw">NemoClaw repository</a> contains the
+    orchestrator source, sandbox configurations, and the full deployment runbook. The
+    runbook's "gotchas" sections will save you several hours of debugging if you are building
+    something similar.
+  </p>
+
+  <!-- ================================================================ -->
+  <!-- Footer                                                            -->
+  <!-- ================================================================ -->
+  <footer>
+    <p>Carlos Macaya &mdash; March 2026</p>
+    <p>
+      Part 1: <a href="part1-deployment.html">Deploying NemoClaw: 3 Machines, 4 Sandboxes, 1 Local 120B Model</a>
+    </p>
+    <p style="margin-top: 12px;">
+      Published in <em>Towards AI</em> &mdash;
+      Written with assistance from Claude and Gemini running locally on NemoClaw.
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
