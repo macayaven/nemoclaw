@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Running a 120B Parameter Model Locally with Multi-Machine AI Agents: A Complete NemoClaw Deployment Guide</title>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --text:        #1a1a1a;
+      --muted:       #6b6b6b;
+      --border:      #e0e0e0;
+      --code-bg:     #1e1e2e;
+      --code-text:   #cdd6f4;
+      --code-string: #a6e3a1;
+      --code-key:    #89b4fa;
+      --code-num:    #fab387;
+      --code-cmnt:   #6c7086;
+      --code-kw:     #cba6f7;
+      --tag-bg:      #f0f4ff;
+      --tag-text:    #3b5bdb;
+      --accent:      #2563eb;
+      --tldr-bg:     #f8faff;
+      --tldr-border: #2563eb;
+      --warn-bg:     #fffbeb;
+      --warn-border: #d97706;
+      --table-head:  #f6f6f6;
+    }
+
+    html { font-size: 18px; }
+
+    body {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      color: var(--text);
+      background: #fff;
+      line-height: 1.75;
+    }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 5rem;
+    }
+
+    /* ── Header ── */
+    .article-header {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .article-tag {
+      display: inline-block;
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.3em 0.75em;
+      border-radius: 3px;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 {
+      font-size: 2.1rem;
+      line-height: 1.25;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.9rem;
+    }
+
+    .subtitle {
+      font-size: 1.15rem;
+      color: var(--muted);
+      line-height: 1.55;
+      font-style: italic;
+      margin-bottom: 1.2rem;
+    }
+
+    .meta {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.82rem;
+      color: var(--muted);
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    /* ── TL;DR ── */
+    .tldr {
+      background: var(--tldr-bg);
+      border-left: 4px solid var(--tldr-border);
+      border-radius: 4px;
+      padding: 1.25rem 1.5rem;
+      margin: 2rem 0;
+    }
+
+    .tldr-label {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    .tldr ul {
+      padding-left: 1.25rem;
+    }
+
+    .tldr li {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      margin-bottom: 0.45rem;
+    }
+
+    /* ── Headings ── */
+    h2 {
+      font-size: 1.55rem;
+      font-weight: 700;
+      margin: 3rem 0 0.85rem;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin: 2rem 0 0.65rem;
+      line-height: 1.35;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    /* ── Body Text ── */
+    p {
+      margin-bottom: 1.15rem;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.15s;
+    }
+
+    a:hover { border-bottom-color: var(--accent); }
+
+    strong { font-weight: 700; }
+    em { font-style: italic; }
+
+    /* ── Lists ── */
+    ul, ol {
+      padding-left: 1.5rem;
+      margin-bottom: 1.15rem;
+    }
+
+    li {
+      margin-bottom: 0.4rem;
+      line-height: 1.7;
+    }
+
+    /* ── Code — inline ── */
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+      font-size: 0.82em;
+      background: #f4f4f8;
+      color: #c0392b;
+      padding: 0.15em 0.4em;
+      border-radius: 3px;
+    }
+
+    /* ── Code — blocks ── */
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      padding: 1.25rem 1.5rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 1.5rem 0;
+      position: relative;
+    }
+
+    pre code {
+      font-size: 1em;
+      background: none;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    /* Simple syntax coloring via CSS — applied with span classes */
+    .tok-kw     { color: var(--code-kw); }
+    .tok-str    { color: var(--code-string); }
+    .tok-num    { color: var(--code-num); }
+    .tok-cmnt   { color: var(--code-cmnt); font-style: italic; }
+    .tok-key    { color: var(--code-key); }
+    .tok-flag   { color: #f38ba8; }
+    .tok-val    { color: var(--code-string); }
+
+    /* Lang label */
+    pre[data-lang]::before {
+      content: attr(data-lang);
+      position: absolute;
+      top: 0.6rem;
+      right: 1rem;
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #585b70;
+    }
+
+    /* ── Mermaid / diagram blocks ── */
+    .diagram-wrap {
+      margin: 1.75rem 0;
+    }
+
+    .diagram-label {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .diagram-wrap pre {
+      background: #13131f;
+      border: 1px solid #2a2a3e;
+    }
+
+    .diagram-caption {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 0.5rem;
+      font-style: italic;
+    }
+
+    /* ── Callout / warning ── */
+    .callout {
+      background: var(--warn-bg);
+      border-left: 4px solid var(--warn-border);
+      padding: 1rem 1.25rem;
+      border-radius: 4px;
+      margin: 1.5rem 0;
+      font-size: 0.92rem;
+    }
+
+    .callout strong { color: #92400e; }
+
+    /* ── Tables ── */
+    .table-wrap { overflow-x: auto; margin: 1.5rem 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    th {
+      background: var(--table-head);
+      text-align: left;
+      padding: 0.6rem 0.85rem;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+    }
+
+    td {
+      padding: 0.55rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Divider ── */
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 3rem 0;
+    }
+
+    /* ── Phase badge ── */
+    .phase-badge {
+      display: inline-block;
+      background: #1a1a2e;
+      color: #89b4fa;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.25em 0.7em;
+      border-radius: 3px;
+      margin-bottom: 0.6rem;
+    }
+
+    /* ── Footer ── */
+    .article-footer {
+      margin-top: 3.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .credits-heading {
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .credits-list {
+      list-style: none;
+      padding: 0;
+      columns: 2;
+      column-gap: 1.5rem;
+    }
+
+    .credits-list li {
+      margin-bottom: 0.3rem;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      html { font-size: 16px; }
+      h1 { font-size: 1.7rem; }
+      .credits-list { columns: 1; }
+      .meta { gap: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ── -->
+  <header class="article-header">
+    <div class="article-tag">AI Infrastructure &middot; Part 1 of a Series</div>
+
+    <h1>Running a 120B Parameter Model Locally with Multi-Machine AI Agents: A Complete NemoClaw Deployment Guide</h1>
+
+    <p class="subtitle">How I deployed NVIDIA's NemoClaw across a DGX Spark, Mac Studio, and Raspberry Pi &mdash; with 4 isolated coding agents, private inference, and zero cloud dependency</p>
+
+    <div class="meta">
+      <span>March 2026</span>
+      <span>~3,600 words</span>
+      <span>AI-assisted deployment, human-written article</span>
+    </div>
+  </header>
+
+  <!-- ── TL;DR ── -->
+  <div class="tldr">
+    <div class="tldr-label">TL;DR</div>
+    <ul>
+      <li>NemoClaw is NVIDIA's open-source reference stack for running AI agents safely on your own hardware &mdash; it wraps agents in isolated sandboxes with a private inference router.</li>
+      <li>We deployed a 120B parameter Nemotron model on a DGX Spark (128GB Blackwell GPU) with four fully isolated coding agents: OpenClaw, Claude Code, Codex, and Gemini CLI.</li>
+      <li>A Mac Studio (M4 Max, 36GB) acts as a fast secondary inference server for lighter workloads, connected via a TCP forwarder that works around Cursor IDE's port conflict.</li>
+      <li>A Raspberry Pi runs the infrastructure layer: unified API gateway (LiteLLM), DNS (Pi-hole), monitoring (Uptime Kuma), and Tailscale subnet routing &mdash; all at 5W.</li>
+      <li>Total deployment time was approximately two hours including troubleshooting; this guide documents every step, every gotcha, and every fix.</li>
+    </ul>
+  </div>
+
+  <!-- ── Why This Matters ── -->
+  <h2>Why This Matters</h2>
+
+  <p>Running AI coding agents directly on your machine is convenient until it is not. The moment you type <code>claude</code> or <code>codex</code> in a terminal, that agent inherits your full filesystem permissions, your network access, and your credentials. It can read your SSH keys. It can exfiltrate source code. It can make network requests you never authorized. And you have no audit trail of what it actually did.</p>
+
+  <p>The standard response is to use hosted cloud agents, which trades one problem for another. Now your proprietary code leaves your machine on every request. You pay per token at scale. You depend on uptime you do not control. And you still have no meaningful audit trail &mdash; just the provider's promise that they are not training on your data.</p>
+
+  <p>NemoClaw offers a third option: agents that run on your hardware, inside cryptographically isolated sandboxes, with inference routed through a private proxy that defaults to local models. Cloud is opt-in, not the default. This guide documents exactly how to build it.</p>
+
+  <p>This is also an honest account of a real deployment, not a polished demo. The mistakes are included. The workarounds are included. If you follow this, you should end up with a working system.</p>
+
+  <!-- ── What We're Building ── -->
+  <h2>What We're Building</h2>
+
+  <p>The finished system consists of three machines connected via Tailscale, each with a distinct role:</p>
+
+  <ul>
+    <li><strong>DGX Spark</strong> (NVIDIA GB10 Blackwell, 128GB UMA, Ubuntu 24.04 ARM64) &mdash; primary inference host for the 120B Nemotron model, control plane for four agent sandboxes, and Tailscale HTTPS endpoint</li>
+    <li><strong>Mac Studio</strong> (M4 Max, 36GB, macOS 15.4) &mdash; secondary inference host running Qwen3 8B for fast responses, primary development workstation, and OpenClaw companion app host</li>
+    <li><strong>Raspberry Pi</strong> (ARM64, 3.7GB RAM, Debian Bookworm) &mdash; infrastructure control plane running LiteLLM proxy, Pi-hole DNS, Uptime Kuma monitoring, and Tailscale subnet routing</li>
+  </ul>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Mermaid diagram &mdash; render at mermaid.live</div>
+    <pre data-lang="mermaid"><code>graph TD
+    subgraph "Tailscale Mesh VPN"
+        subgraph "DGX Spark (100.93.220.104)"
+            OL["Ollama\nNemotron 120B"]
+            LMS["LM Studio\nHeadless :1234"]
+            GW["OpenShell Gateway\n:8080"]
+            SB1["Sandbox: nemoclaw-main\nOpenClaw :18789"]
+            SB2["Sandbox: claude-dev\nClaude Code"]
+            SB3["Sandbox: codex-dev\nCodex + Ollama"]
+            SB4["Sandbox: gemini-dev\nGemini CLI"]
+            TS["Tailscale Serve\nHTTPS :443"]
+        end
+        subgraph "Mac Studio (100.116.228.36)"
+            OLM["Ollama.app\nQwen3 8B :11434"]
+            FWD["TCP Forwarder\n:11435 to :11434"]
+            NC["OpenClaw Node Host"]
+        end
+        subgraph "Raspberry Pi (100.85.6.21)"
+            LL["LiteLLM Proxy :4000"]
+            PH["Pi-hole DNS"]
+            UK["Uptime Kuma"]
+            TSR["Tailscale Subnet Router"]
+        end
+    end
+    GW -- "inference.local" --> OL
+    GW -- "inference.local" --> LMS
+    GW -- "mac-ollama provider" --> FWD
+    FWD --> OLM
+    NC -- "wss via Tailscale" --> TS
+    TS --> SB1
+    LL --> OL
+    LL --> FWD</code></pre>
+    <p class="diagram-caption">Figure 1: Full three-machine NemoClaw architecture connected via Tailscale mesh VPN.</p>
+  </div>
+
+  <!-- ── The NemoClaw Stack ── -->
+  <h2>The NemoClaw Stack (Conceptual)</h2>
+
+  <p>Before touching a command, it helps to understand what NemoClaw actually is. The name refers to a layered stack, not a single application.</p>
+
+  <h3>The Four Layers</h3>
+
+  <pre data-lang="text"><code>Ollama (engine)
+  Loads and serves LLMs. Provides an OpenAI-compatible REST API.
+  └── OpenShell (platform)
+        Manages sandboxes, credentials, inference routing, and policies.
+        Uses k3s internally — you never interact with k3s directly.
+        └── OpenClaw (application)
+              The AI agent. Runs inside an OpenShell sandbox.
+              Browser UI on port 18789, TUI mode, CLI mode.
+              └── NemoClaw (deployment)
+                    Your specific configuration: Nemotron on DGX Spark,
+                    four sandboxes, multi-machine routing, Tailscale.</code></pre>
+
+  <p>NemoClaw is not a Kubernetes deployment you manage. It is not just OpenClaw with a local model. It is the combination of all four layers, wired together with declarative configuration and a CLI that handles the orchestration.</p>
+
+  <h3>The Three-Layer Security Model</h3>
+
+  <p>Every request from every agent passes through three enforcement layers:</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-label">Mermaid diagram &mdash; render at mermaid.live</div>
+    <pre data-lang="mermaid"><code>graph TD
+    A1["Agent: OpenClaw"] --> G
+    A2["Agent: Claude Code"] --> G
+    A3["Agent: Codex"] --> G
+    A4["Agent: Gemini CLI"] --> G
+
+    subgraph "Layer 1: Sandboxes"
+        A1
+        A2
+        A3
+        A4
+    end
+
+    subgraph "Layer 2: Guardrails"
+        G["Access Control (YAML policies, default-deny)"]
+        G --> P["Privacy Control (inference stays local by default)"]
+        P --> S["Skills Control (explicit capability grants)"]
+    end
+
+    subgraph "Layer 3: Private Inference Router"
+        S --> IR["https://inference.local/v1 — Virtual endpoint"]
+        IR --> L["Local Models: Nemotron 120B, Qwen3 8B (DEFAULT)"]
+        IR --> C["Cloud Models: Claude, GPT, Gemini (OPT-IN only)"]
+    end</code></pre>
+    <p class="diagram-caption">Figure 2: Three-layer security model. Every agent call is filtered by sandboxing, guardrails, and the inference router before reaching a model.</p>
+  </div>
+
+  <p><strong>Layer 1 &mdash; Sandboxes</strong> provide kernel-level isolation: Landlock LSM for filesystem restriction, seccomp for syscall filtering, and network namespaces per container. Agents can only write to <code>/sandbox</code> and <code>/tmp</code>. All outbound network connections are blocked by default.</p>
+
+  <p><strong>Layer 2 &mdash; Guardrails</strong> are declarative YAML policies defining exactly which network endpoints each agent can reach, and with which HTTP methods. An agent can be allowed to GET from a repository host but blocked from POST to the same host. Unknown destinations trigger an operator approval prompt in the monitoring TUI.</p>
+
+  <p><strong>Layer 3 &mdash; Private Inference Router</strong> is the <code>inference.local</code> virtual endpoint. All four agents call <code>https://inference.local/v1</code> &mdash; they never see the actual Ollama address or API credentials. The OpenShell gateway intercepts each request, injects credentials, and forwards to the configured provider. You can switch models in five seconds without restarting any sandbox.</p>
+
+  <!-- ── Hardware Requirements ── -->
+  <h2>Hardware Requirements</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Machine</th>
+          <th>CPU / GPU</th>
+          <th>RAM</th>
+          <th>OS</th>
+          <th>Role</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>DGX Spark</td>
+          <td>NVIDIA GB10 Blackwell</td>
+          <td>128GB UMA</td>
+          <td>Ubuntu 24.04 ARM64</td>
+          <td>Primary inference + control plane</td>
+        </tr>
+        <tr>
+          <td>Mac Studio</td>
+          <td>Apple M4 Max</td>
+          <td>36GB</td>
+          <td>macOS 15.4</td>
+          <td>Secondary inference + dev workstation</td>
+        </tr>
+        <tr>
+          <td>Raspberry Pi</td>
+          <td>ARM64 Cortex-A72</td>
+          <td>3.7GB</td>
+          <td>Debian Bookworm</td>
+          <td>Infrastructure layer</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Minimum Viable Setup</h3>
+
+  <p>You do not need three machines to run NemoClaw. The minimum requirements are:</p>
+
+  <ul>
+    <li><strong>One machine with a GPU and Docker</strong> &mdash; any Linux machine with 16GB+ VRAM can run a useful model (Qwen3 8B at Q4 quantization requires roughly 8GB VRAM)</li>
+    <li><strong>Ollama installed with a model downloaded</strong> &mdash; <code>ollama pull qwen3:8b</code> is a solid starting point</li>
+    <li><strong>OpenShell installed</strong> &mdash; <code>pip install openshell</code> in a virtualenv</li>
+    <li><strong>NemoClaw CLI installed</strong> &mdash; <code>npm install -g nemoclaw</code></li>
+  </ul>
+
+  <p>The three-machine setup adds secondary inference, infrastructure monitoring, and subnet routing. All of that is additive. Start with one machine and expand.</p>
+
+  <!-- ── Phase 1 ── -->
+  <hr />
+  <div class="phase-badge">Phase 1</div>
+  <h2>Core Deployment on DGX Spark</h2>
+
+  <p>This is the foundational phase. Every other phase builds on what we configure here.</p>
+
+  <h3>Step 1: Configure Ollama</h3>
+
+  <p>Ollama by default binds to <code>127.0.0.1:11434</code>, which is unreachable from inside Docker containers &mdash; including the OpenShell sandboxes that need to call it. We fix this with a systemd override. We also set <code>KEEP_ALIVE=-1</code> to prevent the model from being evicted from VRAM between requests.</p>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># Create a systemd drop-in override</span>
+sudo tee /etc/systemd/system/ollama.service.d/override.conf &lt;&lt; 'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart ollama</code></pre>
+
+  <p>Verify it worked:</p>
+
+  <pre data-lang="bash"><code>ss -tlnp | grep 11434
+<span class="tok-cmnt"># Expected: *:11434 (not 127.0.0.1:11434)</span></code></pre>
+
+  <div class="callout">
+    <strong>Gotcha:</strong> Without <code>KEEP_ALIVE=-1</code>, a 120B model takes 30&ndash;60 seconds to reload from disk after an idle timeout. The system becomes effectively unusable. This is not optional.
+  </div>
+
+  <h3>Step 2: Start LM Studio Headless</h3>
+
+  <pre data-lang="bash"><code>lms server start --port 1234 --bind 0.0.0.0 --cors</code></pre>
+
+  <p>LM Studio's background daemon (<code>llmster</code>) may already be running. If the command reports a verification failure, check <code>ss -tlnp | grep 1234</code> &mdash; if the port is bound, the daemon is active.</p>
+
+  <h3>Step 3: Start the OpenShell Gateway</h3>
+
+  <pre data-lang="bash"><code>source ~/workspace/nemoclaw/openshell-env/bin/activate
+openshell gateway start --recreate</code></pre>
+
+  <p>The <code>--recreate</code> flag is important if a previous gateway exists but is not running. The gateway takes approximately 15 seconds to bootstrap k3s inside Docker. Verify with <code>openshell status</code> &mdash; you should see <code>Status: Connected</code>.</p>
+
+  <h3>Step 4: Register Inference Providers</h3>
+
+  <p>The key hostname is <code>host.openshell.internal</code> &mdash; a special DNS name that resolves to the gateway host from inside any sandbox. You cannot use <code>localhost</code> or <code>127.0.0.1</code> from inside a container.</p>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># Ollama provider (primary — Nemotron 120B)</span>
+openshell provider create \
+    --name local-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
+
+<span class="tok-cmnt"># LM Studio provider (Anthropic-compatible alternative)</span>
+openshell provider create \
+    --name local-lmstudio \
+    --type openai \
+    --credential OPENAI_API_KEY=lm-studio \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:1234/v1</code></pre>
+
+  <h3>Step 5: Set the Default Inference Route</h3>
+
+  <pre data-lang="bash"><code>openshell inference set --provider local-ollama --model nemotron-3-super:120b</code></pre>
+
+  <p>Verify with <code>openshell inference get</code>. The gateway validates the endpoint is reachable before confirming.</p>
+
+  <h3>Step 6: Create the OpenClaw Sandbox</h3>
+
+  <pre data-lang="bash"><code>openshell sandbox create \
+    --keep \
+    --forward 18789 \
+    --name nemoclaw-main \
+    --from openclaw \
+    -- openclaw-start</code></pre>
+
+  <p>The <code>--keep</code> flag persists the sandbox across gateway restarts. The <code>--from openclaw</code> flag pulls the community OpenClaw image with pre-configured network policies.</p>
+
+  <h3>Step 7: Run OpenClaw Onboarding</h3>
+
+  <pre data-lang="bash"><code>openshell sandbox connect nemoclaw-main
+<span class="tok-cmnt"># Inside the sandbox:</span>
+openclaw onboard</code></pre>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Wizard Prompt</th><th>Answer</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Security acknowledgment</td><td>Yes</td></tr>
+        <tr><td>Onboarding mode</td><td>QuickStart</td></tr>
+        <tr><td>Model / auth provider</td><td>Custom Provider</td></tr>
+        <tr><td>API Base URL</td><td><code>https://inference.local/v1</code></td></tr>
+        <tr><td>API Key</td><td><code>ollama</code></td></tr>
+        <tr><td>Endpoint compatibility</td><td>OpenAI-compatible</td></tr>
+        <tr><td>Model ID</td><td><code>nemotron-3-super:120b</code></td></tr>
+        <tr><td>Channel / Skills / Hooks</td><td>Skip for now</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>The most common mistake:</strong> entering <code>https://inference.local:11434/v1</code> instead of <code>https://inference.local/v1</code>. The <code>inference.local</code> hostname is a virtual endpoint managed by OpenShell's proxy &mdash; it has no port. Adding <code>:11434</code> produces a 403 error.
+  </div>
+
+  <h3>Step 8: Start the Gateway and Verify End-to-End</h3>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># Inside the sandbox:</span>
+nohup openclaw gateway run > /tmp/gateway.log 2>&1 &
+
+<span class="tok-cmnt"># Verify end-to-end inference:</span>
+curl -s https://inference.local/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"nemotron-3-super:120b","messages":[{"role":"user","content":"Say hello"}],"max_tokens":10}'</code></pre>
+
+  <p>A successful JSON response confirms the full chain: sandbox to <code>inference.local</code>, through the OpenShell gateway, to Ollama, to Nemotron 120B, and back. Access the browser UI at <code>http://127.0.0.1:18789/</code>.</p>
+
+  <!-- ── Phase 2 ── -->
+  <hr />
+  <div class="phase-badge">Phase 2</div>
+  <h2>Adding a Second Machine (Mac Studio)</h2>
+
+  <p>The Mac Studio provides a fast secondary inference path. Qwen3 8B on M4 Max responds in under a second for most prompts, which makes it useful for quick tasks while the Spark handles heavy multi-step reasoning with Nemotron.</p>
+
+  <h3>The Cursor Port Conflict</h3>
+
+  <p>The Mac Studio's Ollama is managed by the Ollama.app GUI, which also provides models to Cursor IDE. Both share <code>127.0.0.1:11434</code>. Changing the binding address breaks Cursor. We cannot change the binding.</p>
+
+  <p>The solution is a minimal TCP forwarder written in the Python standard library &mdash; no dependencies, no installation. It listens on port 11435 (network-accessible) and proxies to port 11434 (localhost).</p>
+
+  <pre data-lang="python"><code><span class="tok-cmnt"># Run on the Mac Studio via SSH from the Spark</span>
+python3 -c "
+import socket, threading
+
+def forward(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data: break
+            dst.sendall(data)
+    except: pass
+    src.close(); dst.close()
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('0.0.0.0', 11435))
+server.listen(50)
+while True:
+    client, _ = server.accept()
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    upstream.connect(('127.0.0.1', 11434))
+    threading.Thread(target=forward, args=(client, upstream), daemon=True).start()
+    threading.Thread(target=forward, args=(upstream, client), daemon=True).start()
+" &</code></pre>
+
+  <h3>Register the Mac as an Inference Provider</h3>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># On the Spark:</span>
+openshell provider create \
+    --name mac-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://100.116.228.36:11435/v1</code></pre>
+
+  <p>Switching between models now takes about five seconds and requires no sandbox restart:</p>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># Switch to Mac (fast, 8B)</span>
+openshell inference set --provider mac-ollama --model qwen3:8b
+
+<span class="tok-cmnt"># Switch back to Spark (heavy, 120B)</span>
+openshell inference set --provider local-ollama --model nemotron-3-super:120b</code></pre>
+
+  <h3>Installing the OpenClaw Companion App</h3>
+
+  <p>The OpenClaw node host is a headless service running on the Mac that gives the NemoClaw agent access to Mac-native capabilities: screen recording, AppleScript automation, and system notifications. It connects back to the Spark's gateway over Tailscale.</p>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># On the Mac:</span>
+openclaw node install \
+    --host spark-caeb.tail48bab7.ts.net \
+    --port 443 \
+    --tls \
+    --force \
+    --display-name "Mac Studio"</code></pre>
+
+  <p>The connection chain runs through four hops:</p>
+
+  <pre data-lang="text"><code>Mac node host
+  → wss://spark-caeb.tail48bab7.ts.net:443   (Tailscale Serve HTTPS)
+    → 127.0.0.1:18789                          (OpenShell port forward)
+      → sandbox nemoclaw-main:18789             (OpenClaw gateway)</code></pre>
+
+  <div class="callout">
+    <strong>The most fragile link:</strong> the OpenShell port forward is an SSH tunnel that can drop silently. If the node host returns a 502, restart the forward on the Spark: <code>openshell forward start 18789 nemoclaw-main --background</code>
+  </div>
+
+  <!-- ── Phase 3 ── -->
+  <hr />
+  <div class="phase-badge">Phase 3</div>
+  <h2>Infrastructure Layer on Raspberry Pi</h2>
+
+  <p>The Pi has 3.7GB of RAM and cannot run any meaningful model. Its value is as a low-power, always-on infrastructure host &mdash; a control plane that runs independently of the machines doing heavy work.</p>
+
+  <h3>LiteLLM Proxy</h3>
+
+  <pre data-lang="bash"><code>python3 -m venv ~/litellm-env
+source ~/litellm-env/bin/activate
+pip install "litellm[proxy]"</code></pre>
+
+  <pre data-lang="yaml"><code><span class="tok-cmnt"># ~/litellm/config.yaml</span>
+<span class="tok-key">model_list</span>:
+  - <span class="tok-key">model_name</span>: <span class="tok-str">"nemotron-3-super:120b"</span>
+    <span class="tok-key">litellm_params</span>:
+      <span class="tok-key">model</span>: <span class="tok-str">"ollama/nemotron-3-super:120b"</span>
+      <span class="tok-key">api_base</span>: <span class="tok-str">"http://100.93.220.104:11434"</span>
+  - <span class="tok-key">model_name</span>: <span class="tok-str">"qwen3:8b"</span>
+    <span class="tok-key">litellm_params</span>:
+      <span class="tok-key">model</span>: <span class="tok-str">"ollama/qwen3:8b"</span>
+      <span class="tok-key">api_base</span>: <span class="tok-str">"http://100.116.228.36:11435"</span></code></pre>
+
+  <pre data-lang="bash"><code>sudo systemctl enable litellm && sudo systemctl start litellm</code></pre>
+
+  <h3>Tailscale Subnet Router</h3>
+
+  <pre data-lang="bash"><code>sudo tailscale up --advertise-routes=192.168.1.0/24 --accept-routes</code></pre>
+
+  <p>With subnet routing enabled, any Tailscale device can reach any machine on the local <code>192.168.1.0/24</code> network without needing Tailscale installed on every device. A phone or tablet can reach the Spark without per-device setup.</p>
+
+  <!-- ── Phase 4 ── -->
+  <hr />
+  <div class="phase-badge">Phase 4</div>
+  <h2>Four Agent Sandboxes</h2>
+
+  <p>With the infrastructure running, we create four independent agent sandboxes. Each has its own filesystem, its own network policy, and its own inference path.</p>
+
+  <h3>Creating the Sandboxes</h3>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># Claude Code — uses Anthropic cloud API</span>
+openshell sandbox create --keep --name claude-dev --auto-providers -- claude
+
+<span class="tok-cmnt"># Codex — configured for local Ollama inference</span>
+openshell sandbox create --keep --name codex-dev --auto-providers -- bash
+
+<span class="tok-cmnt"># Gemini CLI — requires custom npm install inside the sandbox</span>
+openshell sandbox create --keep --name gemini-dev --auto-providers -- bash</code></pre>
+
+  <h3>Configuring Codex for Local Inference</h3>
+
+  <p>Codex hardcodes its API calls to <code>localhost</code> by default. We configure it with a <code>~/.codex/config.toml</code> inside the sandbox to use the <code>host.openshell.internal</code> bridge instead.</p>
+
+  <pre data-lang="toml"><code><span class="tok-cmnt"># ~/.codex/config.toml (inside codex-dev sandbox)</span>
+<span class="tok-key">model</span> = <span class="tok-str">"nemotron-3-super:120b"</span>
+<span class="tok-key">model_provider</span> = <span class="tok-str">"ollama"</span>
+
+[<span class="tok-key">model_providers.ollama</span>]
+<span class="tok-key">name</span> = <span class="tok-str">"Ollama (Spark Local)"</span>
+<span class="tok-key">base_url</span> = <span class="tok-str">"http://host.openshell.internal:11434/v1"</span>
+<span class="tok-key">env_key</span> = <span class="tok-str">"OLLAMA_API_KEY"</span>
+<span class="tok-key">wire_api</span> = <span class="tok-str">"responses"</span></code></pre>
+
+  <h3>Installing Gemini CLI in the Sandbox</h3>
+
+  <pre data-lang="bash"><code>openshell sandbox connect gemini-dev
+<span class="tok-cmnt"># Inside the sandbox — sandbox user has no sudo access</span>
+mkdir -p ~/.npm-global
+npm config set prefix ~/.npm-global
+export PATH=~/.npm-global/bin:$PATH
+npm install -g @google/gemini-cli
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc</code></pre>
+
+  <h3>The Privacy Boundary</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Sandbox</th>
+          <th>Inference Path</th>
+          <th>Data Leaves Hardware?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>nemoclaw-main</code></td>
+          <td><code>inference.local</code> &rarr; Ollama &rarr; Nemotron 120B</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>codex-dev</code></td>
+          <td><code>host.openshell.internal</code> &rarr; Ollama &rarr; Nemotron 120B</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>claude-dev</code></td>
+          <td>Anthropic API</td>
+          <td>Yes (Anthropic)</td>
+        </tr>
+        <tr>
+          <td><code>gemini-dev</code></td>
+          <td>Google Gemini API</td>
+          <td>Yes (Google)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The sandbox guardrails make this boundary enforced, not just documented. A sandbox configured for local inference cannot reach the Anthropic API even if the agent tries.</p>
+
+  <!-- ── Phase 5 ── -->
+  <hr />
+  <div class="phase-badge">Phase 5</div>
+  <h2>Remote Access via Tailscale Serve</h2>
+
+  <p>Tailscale Serve creates an HTTPS endpoint for the OpenClaw gateway, reachable from any Tailscale device with a valid TLS certificate &mdash; no self-signed certificates, no router port forwarding.</p>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># On the Spark:</span>
+tailscale serve --bg https / http://127.0.0.1:18789</code></pre>
+
+  <p>This creates <code>https://spark-caeb.tail48bab7.ts.net</code> as a Tailscale-network-only HTTPS endpoint pointing to the OpenClaw UI. Access it from any device on your Tailscale network: phone, tablet, laptop. The companion app on the Mac uses this same endpoint for its WebSocket connection.</p>
+
+  <!-- ── What We Learned ── -->
+  <hr />
+  <h2>What We Learned</h2>
+
+  <h3>1. <code>inference.local</code> Has No Port</h3>
+  <p>Use <code>https://inference.local/v1</code>. Never <code>https://inference.local:11434</code>. The hostname is a virtual endpoint managed entirely by OpenShell's internal proxy &mdash; adding a port number routes to a different service that returns a 403.</p>
+
+  <h3>2. Cursor Grabs Ollama's Port on macOS</h3>
+  <p>Cursor IDE runs an embedded Ollama instance on port 11434. You cannot reconfigure this without breaking Cursor. The TCP forwarder pattern works around this without touching either application.</p>
+
+  <h3>3. Sandbox Users Have Limited Permissions</h3>
+  <p>The <code>sandbox</code> user has no sudo access and cannot write to system paths. Use <code>~/.npm-global</code> for npm packages, <code>~/venv</code> for Python, and <code>~/bin</code> for binaries. Any install that requires root will fail inside a sandbox by design.</p>
+
+  <h3>4. The Port Forward is the Most Fragile Link</h3>
+  <p>The OpenShell port forward is an SSH tunnel. SSH tunnels drop silently under network changes, gateway restarts, or extended idle periods. The entire Mac companion app connection depends on this tunnel being live. Wrap it in a systemd watchdog for production use.</p>
+
+  <h3>5. Browser Auth, Not API Keys</h3>
+  <p>Modern AI subscriptions (Claude Pro, Codex, Gemini Advanced) authenticate via browser OAuth, not API keys. Use <code>--auto-providers</code> when creating sandboxes and authenticate inside each sandbox after creation.</p>
+
+  <h3>6. <code>KEEP_ALIVE=-1</code> is Not Optional for 120B Models</h3>
+  <p>Without it, Ollama evicts the model from VRAM after a few minutes of inactivity. The cold-start penalty for a 120B model at Q4 quantization is 30&ndash;60 seconds per request after eviction. The system becomes effectively unusable.</p>
+
+  <h3>7. Tailscale Solves Multi-Machine Networking</h3>
+  <p>Every machine on Tailscale gets a stable IP that does not change with DHCP renewals, network switches, or reboots. We used Tailscale IPs in every provider configuration. No private DNS, no hardcoded local IPs, no router port forwarding required.</p>
+
+  <h3>8. The Pi Earns Its Place</h3>
+  <p>A Raspberry Pi cannot run inference. What it can do is run LiteLLM, Pi-hole, Uptime Kuma, and a Tailscale subnet router at 5W continuous power draw. These services make the whole system more observable and easier to operate from any device on the network.</p>
+
+  <!-- ── Generic Guide ── -->
+  <hr />
+  <h2>Generic Multi-Device Guide</h2>
+
+  <p>The three-machine setup is not a requirement. Here is how to adapt this to different hardware configurations.</p>
+
+  <h3>Single Machine (Minimum Viable)</h3>
+
+  <pre data-lang="bash"><code><span class="tok-cmnt"># 1. Configure Ollama</span>
+sudo tee /etc/systemd/system/ollama.service.d/override.conf &lt;&lt; 'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+
+<span class="tok-cmnt"># 2. Start OpenShell gateway</span>
+source ~/openshell-env/bin/activate
+openshell gateway start
+
+<span class="tok-cmnt"># 3. Register local Ollama</span>
+openshell provider create \
+    --name local-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
+
+<span class="tok-cmnt"># 4. Set inference route</span>
+openshell inference set --provider local-ollama --model &lt;your-model&gt;
+
+<span class="tok-cmnt"># 5. Create sandbox and onboard</span>
+openshell sandbox create --keep --forward 18789 --name main --from openclaw -- openclaw-start
+openshell sandbox connect main
+<span class="tok-cmnt"># Inside sandbox: use https://inference.local/v1 as API base URL</span>
+openclaw onboard</code></pre>
+
+  <h3>Adding a Second Machine</h3>
+
+  <p>If the second machine's Ollama binds to <code>0.0.0.0</code>, register it directly. If it binds only to localhost (macOS Ollama.app), use the TCP forwarder pattern on port 11435:</p>
+
+  <pre data-lang="bash"><code>openshell provider create \
+    --name secondary-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://&lt;second-machine-ip&gt;:11435/v1</code></pre>
+
+  <h3>Adding a Pi for Infrastructure</h3>
+
+  <pre data-lang="bash"><code>pip install "litellm[proxy]"
+litellm --config ~/litellm/config.yaml --port 4000</code></pre>
+
+  <p>Add models from all your machines to <code>config.yaml</code>. Any client can now reach all models through one endpoint.</p>
+
+  <!-- ── Part 2 Preview ── -->
+  <hr />
+  <h2>What's Next (Part 2 Preview)</h2>
+
+  <p>Part 1 covered deployment: how to get the machines running, how to wire inference providers together, how to create isolated agent sandboxes, and how to survive the gotchas. Everything we built is infrastructure.</p>
+
+  <p>Part 2 will cover using it. Specifically:</p>
+
+  <ul>
+    <li><strong>The NemoClaw orchestrator</strong> &mdash; how four agents cooperate on a task, with one acting as a planner and others as specialized executors</li>
+    <li><strong>Practical workflows</strong> &mdash; code review across three simultaneous agents, research tasks combining local and cloud inference, automated testing pipelines</li>
+    <li><strong>MCP servers</strong> &mdash; writing shared tools that all agents can use across sandbox boundaries</li>
+    <li><strong>Monitoring in practice</strong> &mdash; reading the Uptime Kuma dashboard, interpreting OpenShell's TUI, debugging a failing inference route</li>
+    <li><strong>What the privacy boundary means in practice</strong> &mdash; and when to cross it deliberately</li>
+  </ul>
+
+  <p>The system we built in Part 1 is deliberate. Four agents, each with a distinct inference path and capability set, none of which can interfere with the others. Part 2 shows why that isolation matters when agents are working together.</p>
+
+  <!-- ── Footer / Credits ── -->
+  <hr />
+  <div class="article-footer">
+    <p class="credits-heading">Credits and Tools Used</p>
+    <ul class="credits-list">
+      <li><a href="https://github.com/nvidia/nemoclaw" target="_blank">NVIDIA NemoClaw</a></li>
+      <li><a href="https://opensh.ai" target="_blank">OpenShell</a></li>
+      <li><a href="https://openclaw.ai" target="_blank">OpenClaw</a></li>
+      <li><a href="https://ollama.com" target="_blank">Ollama</a></li>
+      <li><a href="https://lmstudio.ai" target="_blank">LM Studio</a></li>
+      <li><a href="https://github.com/BerriAI/litellm" target="_blank">LiteLLM</a></li>
+      <li><a href="https://tailscale.com" target="_blank">Tailscale</a></li>
+      <li><a href="https://pi-hole.net" target="_blank">Pi-hole</a></li>
+      <li><a href="https://github.com/louislam/uptime-kuma" target="_blank">Uptime Kuma</a></li>
+    </ul>
+
+    <p style="margin-top: 1.25rem;">
+      This deployment was AI-assisted: Claude Sonnet and Codex running inside the NemoClaw sandboxes helped debug configuration issues and draft documentation as we went. The irony of using the system to document building the system was not lost on us.
+    </p>
+
+    <p style="margin-top: 0.75rem; color: #999;">
+      Part 1 of the NemoClaw deployment series &middot; Written March 2026 &middot; Hardware: DGX Spark (GB10 Blackwell, 128GB), Mac Studio (M4 Max, 36GB), Raspberry Pi 4
+    </p>
+  </div>
+
+</div><!-- /.container -->
+</body>
+</html>
