@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+
 from orchestrator.task_manager import Task
 
 pytestmark = pytest.mark.phase6
