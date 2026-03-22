@@ -237,6 +237,162 @@ sequenceDiagram
     Orch-->>User: final API with review-approved code
 ```
 
+### 2.5 OpenShell Internal Architecture (Adapted from Official Diagram)
+
+This diagram shows how OpenShell works internally on the DGX Spark, adapted to our actual deployment. Based on the official NemoClaw architecture diagram.
+
+```mermaid
+graph TB
+    subgraph External["External Access"]
+        FM["Frontier Models\n(Anthropic, Google, NVIDIA Cloud)\nOpt-in only"]
+        Dev["Developer Machine\n(Mac Studio)"]
+        Mobile["Mobile Devices\n(iPhone via Tailscale)"]
+    end
+
+    subgraph OpenShell["OpenShell Runtime — DGX Spark"]
+        direction TB
+
+        subgraph InferenceLayer["Private Inference Router"]
+            IR["Inference Router\n(inference.local)"]
+            LocalLLM["Local LLMs\nNemotron 120B (Ollama :11434)\nQwen3 Coder (Ollama :11434)\nLM Studio models (:1234)"]
+            MacLLM["Remote LLM\nQwen3 8B (Mac :11435)\nvia Tailscale"]
+        end
+
+        subgraph SandboxLayer["Sandbox Supervisor"]
+            direction TB
+            TG["Tool Generation\n(agent creates tools)"]
+            CE["Code Execution\n(sandboxed shell)"]
+            PA["Policy-Approved Access\n(network egress control)"]
+
+            subgraph Agents["Agents"]
+                A1["OpenClaw\n(nemoclaw-main)\nGeneral reasoning"]
+                A2["Claude Code\n(claude-dev)\nCode review"]
+                A3["Codex\n(codex-dev)\nCode generation"]
+                A4["Gemini CLI\n(gemini-dev)\nResearch"]
+            end
+
+            LR["Long-Running Tasks\nCron jobs, heartbeats\nOrchestrator pipelines"]
+        end
+
+        TEL["Telemetry\nAgent profiling (otel)\nopenshell term / logs"]
+    end
+
+    subgraph EnterpriseData["Approved Data Sources"]
+        GH["GitHub / GitLab"]
+        NPM["npm registry"]
+        Docs["docs.openclaw.ai"]
+    end
+
+    Dev -->|"Provision/Connect\nopenshell CLI"| OpenShell
+    Mobile -->|"Tailscale Serve\nHTTPS :443"| SandboxLayer
+    IR --> LocalLLM
+    IR --> MacLLM
+    IR -.->|"Opt-in only"| FM
+    Agents --> TG
+    Agents --> CE
+    CE -->|"Policy\napproved\naccess"| PA
+    PA --> EnterpriseData
+    TEL -.-> Agents
+    Agents --> LR
+```
+
+### 2.6 NemoClaw Three-Pillar Security Model (Adapted)
+
+This diagram shows the three security layers that protect your deployment, adapted from the official NemoClaw workflow diagram.
+
+```mermaid
+graph TB
+    subgraph Sandboxes["Layer 1: Sandboxes"]
+        direction LR
+        S1["OpenClaw\nTools + MCP\nLocal inference"]
+        S2["Claude Code\nTools + MCP\nCloud (Anthropic)"]
+        S3["Codex CLI\nTools + MCP\nLocal inference"]
+        S4["Gemini CLI\nTools + MCP\nCloud (Google)"]
+    end
+
+    subgraph Guardrails["Layer 2: Guardrails"]
+        direction LR
+        G1["Access Control\nYAML network policies\nDefault-deny egress\nL7 HTTP inspection"]
+        G2["Privacy Control\nLocal models = default\nCloud = opt-in only\nCredential injection"]
+        G3["Skills Control\nExplicit enable/disable\nPolicy presets\noper approval TUI"]
+    end
+
+    subgraph Router["Layer 3: Private Inference Router"]
+        direction LR
+        R1["Local Open Models\n(DEFAULT)\nNemotron 120B\nQwen Coder\nQwen3 8B"]
+        R2["Frontier Models\n(OPT-IN ONLY)\nClaude Opus\nGemini Pro\nGPT-4.1"]
+    end
+
+    Sandboxes --> Guardrails
+    Guardrails --> Router
+
+    subgraph DataFlow["Data Flow Boundary"]
+        direction LR
+        DF1["Approved data\nsources only\n(GitHub, npm, docs)"]
+        DF2["Frontier models\nopt-in only\n(data leaves network)"]
+    end
+
+    Router --> DataFlow
+```
+
+### 2.7 Adding LM Studio as a Provider
+
+LM Studio provides an additional inference server alongside Ollama. It offers both OpenAI-compatible AND Anthropic-compatible APIs, which is useful for agents that speak the Anthropic protocol natively (like Claude Code with local models).
+
+**On the DGX Spark** (port 1234, already running):
+```bash
+# LM Studio is already running on the Spark via llmster daemon
+# Register it as an OpenShell provider:
+openshell provider create \
+    --name local-lmstudio \
+    --type openai \
+    --credential OPENAI_API_KEY=lm-studio \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:1234/v1
+```
+
+**On the Mac Studio** (needs LM Studio app running):
+```bash
+# 1. Open LM Studio app
+open -a "LM Studio"
+
+# 2. In LM Studio: enable "Serve on Local Network" in Settings → Developer
+#    This binds to 0.0.0.0 instead of just localhost
+
+# 3. Start the server (or it starts with the app)
+LMS="/Applications/LM Studio.app/Contents/Resources/app/.webpack/lms"
+"$LMS" server start
+
+# 4. Load a model (e.g., MedGemma 4B for medical AI)
+"$LMS" get google/medgemma-4b-it
+"$LMS" load google/medgemma-4b-it
+
+# 5. Register as provider on the Spark:
+openshell provider create \
+    --name mac-lmstudio \
+    --type openai \
+    --credential OPENAI_API_KEY=lm-studio \
+    --config OPENAI_BASE_URL=http://100.116.228.36:1234/v1
+```
+
+**Port conflict with Cursor:** Cursor also uses port 1234 for its LM Studio integration. Same boot-order issue as Ollama — start LM Studio BEFORE Cursor.
+
+**Verify:**
+```bash
+# Test the provider
+curl http://100.116.228.36:1234/v1/models
+openshell inference set --provider mac-lmstudio --model medgemma-4b-it
+```
+
+**When to use LM Studio vs Ollama:**
+
+| Aspect | Ollama | LM Studio |
+|--------|--------|-----------|
+| API format | OpenAI-compatible only | OpenAI + Anthropic |
+| Model management | `ollama pull/list/ps` | GUI + `lms get/load/ls` |
+| GPU memory control | `KEEP_ALIVE`, per-model | GUI settings |
+| Best for | Primary inference, simple CLI | Experimentation, model browsing, Anthropic-format agents |
+| Port | 11434 | 1234 |
+
 ---
 
 ## 3. Deploy from Scratch
