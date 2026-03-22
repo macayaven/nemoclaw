@@ -274,6 +274,65 @@ openshell inference set --provider local-ollama --model nemotron-3-super:120b
 
 Switching takes ~5 seconds. No sandbox restart needed.
 
+### Install OpenClaw Companion on Mac
+
+The OpenClaw "node host" is a headless service that runs on the Mac and connects to the Spark gateway via Tailscale. It exposes Mac capabilities (screen recording, camera, AppleScript automation, native notifications) to the NemoClaw agent.
+
+**Prerequisites:** OpenClaw CLI must be installed (`openclaw@2026.3.13` was already in `~/.npm-global`).
+
+```bash
+# On the Mac:
+export PATH="$HOME/.npm-global/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"
+openclaw --version
+# Expected: OpenClaw 2026.3.13
+```
+
+**Get the gateway token** from the Spark (needed for auth):
+
+```bash
+# On the Spark:
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    -o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name nemoclaw-main" \
+    sandbox@openshell-nemoclaw-main \
+    "python3 -c \"import json; gw=json.load(open('/sandbox/.openclaw/openclaw.json')).get('gateway',{}); print(gw.get('auth',{}).get('token','NOT FOUND'))\""
+# Output: 7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634
+```
+
+**Install the node host** as a launchd service (survives reboots):
+
+```bash
+# On the Mac:
+openclaw node install \
+    --host spark-caeb.tail48bab7.ts.net \
+    --port 443 \
+    --tls \
+    --force \
+    --display-name "Mac Studio"
+```
+
+**Verify:**
+```bash
+openclaw node status
+# Expected: Runtime: running (pid XXXX, state active)
+```
+
+**Debugging:** If the node host shows "502" or "gateway connect failed", the OpenShell port forward on the Spark died. Fix on the Spark:
+```bash
+source ~/workspace/nemoclaw/openshell-env/bin/activate
+openshell forward start 18789 nemoclaw-main --background
+```
+
+**How the connection chain works:**
+```
+Mac node host → wss://spark-caeb.tail48bab7.ts.net:443
+  → Tailscale Serve (HTTPS proxy)
+    → 127.0.0.1:18789 (OpenShell port forward)
+      → sandbox nemoclaw-main:18789 (OpenClaw gateway)
+```
+
+If any link in this chain breaks, the node host gets a 502. The most fragile link is the OpenShell port forward — it's an SSH tunnel that can drop silently.
+
 ---
 
 ## Phase 3: Raspberry Pi Infrastructure
