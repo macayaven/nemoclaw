@@ -1380,6 +1380,114 @@ chmod +x ~/workspace/nemoclaw/health-check.sh
 
 ---
 
+## Category 11: Subscription-Based Model Switching
+
+These recipes cover using cloud models (Claude, Gemini) with subscription authentication instead of API keys.
+
+### Recipe 31: Switch the Main Agent to Claude Opus (Subscription)
+
+**Why:** You want the main OpenClaw agent to use Claude Opus 4.6 instead of local Nemotron. You have an Anthropic subscription (Claude Pro/Team), not a raw API key.
+
+**CLI (inside nemoclaw-main sandbox):**
+```bash
+openshell sandbox connect nemoclaw-main
+
+# Run the interactive model configuration wizard
+openclaw configure --section model
+
+# When prompted:
+# 1. Select provider: Anthropic
+# 2. Authentication: browser login (opens your browser for Anthropic sign-in)
+# 3. Model: claude-opus-4-6
+# 4. Confirm
+
+# Verify the switch
+openclaw models status
+# Expected: Default model shows claude-opus-4-6
+```
+
+**Web UI:** Go to Config page → Agents section → change the model.
+
+**Switch back to local Nemotron:**
+```bash
+openclaw configure --section model
+# Select: Custom Provider
+# URL: https://inference.local/v1
+# API key: ollama
+# Model: nemotron-3-super:120b
+```
+
+**Important:** When using Claude via subscription, your data goes to Anthropic's servers. When using Nemotron via `inference.local`, data stays on the Spark. This is the privacy boundary.
+
+**Verify:**
+```bash
+openclaw models status
+# Or send a test message:
+openclaw agent --agent main --local -m "What model are you?" --session-id test
+```
+
+### Recipe 32: Switch the Main Agent to Gemini (Subscription)
+
+**Why:** You want to use Google's Gemini models via your Google account subscription.
+
+**CLI (inside nemoclaw-main sandbox):**
+```bash
+openshell sandbox connect nemoclaw-main
+
+openclaw configure --section model
+# Select: Google Gemini
+# Authentication: browser login (Google account)
+# Model: gemini-2.5-pro or gemini-2.5-flash
+```
+
+**Switch back:** Same as Recipe 31 — run `openclaw configure --section model` and select Custom Provider with `inference.local`.
+
+### Recipe 33: Understanding Subscription vs API Key Auth
+
+**Why:** Know when to use which authentication method.
+
+| Auth type | How it works | When to use | Data goes to |
+|-----------|-------------|-------------|--------------|
+| **Subscription (browser login)** | `openclaw configure` opens browser, you sign in with your account | Claude Pro, Gemini, when you have a subscription plan | Cloud (Anthropic/Google) |
+| **API key** | `openshell provider create --credential OPENAI_API_KEY=sk-...` | OpenAI, NVIDIA API Catalog, pay-per-token providers | Cloud (provider) |
+| **Local (no auth)** | `openshell provider create --credential OPENAI_API_KEY=not-needed` | Ollama, LM Studio on your own machines | Stays local |
+| **inference.local** | Sandbox calls `https://inference.local/v1`, OpenShell injects credentials | Default for all sandboxes, routes to active provider | Depends on active provider |
+
+**The key rule:** Subscription auth is configured inside the sandbox via `openclaw configure`. API key auth is configured outside the sandbox via `openshell provider create`. Local providers need no real auth.
+
+**For agents in separate sandboxes** (Claude Code, Codex, Gemini CLI):
+- **Claude Code (`claude-dev`):** Authenticates via browser login when you first connect: `openshell sandbox connect claude-dev` then follow the browser prompt
+- **Codex (`codex-dev`):** Run `codex login` inside the sandbox
+- **Gemini CLI (`gemini-dev`):** Run `gemini` inside the sandbox — it opens browser for Google sign-in
+
+### Recipe 34: Add a Cloud Provider Without API Key
+
+**Why:** You want to register a cloud provider (Anthropic, Google) in OpenShell but you only have a subscription, not an API key.
+
+**The answer:** You can't register subscription-based providers in OpenShell's provider system. OpenShell providers require explicit credentials (`--credential`).
+
+**Instead, use one of these approaches:**
+
+**Approach A: Configure inside the sandbox** (recommended for subscriptions)
+```bash
+openshell sandbox connect nemoclaw-main
+openclaw configure --section model
+# Browser-based login, no API key needed
+```
+
+**Approach B: Extract the session token** (advanced)
+After browser login, the auth token is stored in the sandbox. You could extract it and register as a provider, but this is fragile — tokens expire.
+
+**Approach C: Use the agent's native auth** (for Claude Code, Codex, Gemini)
+Each coding agent sandbox handles its own subscription auth independently. No OpenShell provider needed — just connect and authenticate:
+```bash
+openshell sandbox connect claude-dev   # → browser login for Anthropic
+openshell sandbox connect codex-dev    # → codex login for OpenAI
+openshell sandbox connect gemini-dev   # → browser login for Google
+```
+
+---
+
 ## Quick Reference
 
 | I want to... | Recipe | Key command |
@@ -1416,3 +1524,7 @@ chmod +x ~/workspace/nemoclaw/health-check.sh
 | Stream sandbox logs | 28 | `openshell logs nemoclaw-main --tail` |
 | Watch network policy decisions | 29 | `openshell term` (then Tab/A/D to navigate and approve) |
 | Check everything is working | 30 | `~/workspace/nemoclaw/health-check.sh` |
+| Switch main agent to Claude (subscription) | 31 | `openclaw configure --section model` → Anthropic → browser login |
+| Switch main agent to Gemini (subscription) | 32 | `openclaw configure --section model` → Google → browser login |
+| Understand subscription vs API key auth | 33 | See Recipe 33 comparison table |
+| Use cloud provider without API key | 34 | `openclaw configure --section model` inside sandbox (not `openshell provider`) |
