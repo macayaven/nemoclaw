@@ -17,6 +17,11 @@ SSH_SANDBOX := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -
 	-o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name nemoclaw-main" \
 	sandbox@openshell-nemoclaw-main
 MAC := sshpass -p "1685" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null carlos@100.116.228.36
+OPENCLAW_GATEWAY_LOG := /tmp/gateway.log
+OPENCLAW_SUPERVISOR_LOCAL := scripts/openclaw-gateway-supervise.sh
+OPENCLAW_SUPERVISOR_REMOTE := /tmp/openclaw-gateway-supervise.sh
+OPENCLAW_SUPERVISOR_LOG := /tmp/gateway-supervisor.log
+OPENCLAW_SUPERVISOR_PID := /tmp/gateway-supervisor.pid
 
 # --- IPs ---
 SPARK_IP := 100.93.220.104
@@ -56,11 +61,11 @@ route: ## Show active inference route
 # ===========================================================================
 
 .PHONY: setup
-setup: ## Full setup: gateway + providers + sandboxes + onboard prompt
-	@echo "=== Step 1/5: Starting gateway ==="
+setup: ## Full automated setup: gateway + providers + sandboxes + config + UI (zero manual steps)
+	@echo "=== Step 1/7: Starting gateway ==="
 	@$(OS_ENV) && openshell gateway start 2>&1 | tail -3
 	@echo ""
-	@echo "=== Step 2/5: Registering providers ==="
+	@echo "=== Step 2/7: Registering providers ==="
 	@$(OS_ENV) && \
 		openshell provider create --name local-ollama --type openai \
 			--credential OPENAI_API_KEY=not-needed \
@@ -72,82 +77,68 @@ setup: ## Full setup: gateway + providers + sandboxes + onboard prompt
 			--credential OPENAI_API_KEY=not-needed \
 			--config OPENAI_BASE_URL=http://$(MAC_IP):11435/v1 2>&1 | tail -1
 	@echo ""
-	@echo "=== Step 3/5: Setting inference route ==="
+	@echo "=== Step 3/7: Setting inference route ==="
 	@$(OS_ENV) && openshell inference set --provider local-ollama --model nemotron-3-super:120b 2>&1 | tail -1
 	@echo ""
-	@echo "=== Step 4/5: Creating sandboxes ==="
+	@echo "=== Step 4/7: Creating sandboxes ==="
 	@$(OS_ENV) && \
-		openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from openclaw -- openclaw-start 2>&1 | tail -3; \
+		openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from openclaw -- bash 2>&1 | tail -3; \
 		openshell sandbox create --keep --name claude-dev --auto-providers -- claude 2>&1 | tail -1; \
 		openshell sandbox create --keep --name codex-dev --auto-providers -- bash 2>&1 | tail -1; \
 		openshell sandbox create --keep --name gemini-dev --auto-providers -- bash 2>&1 | tail -1
 	@echo ""
-	@echo "=== Step 5/5: Manual step required ==="
+	@echo "=== Step 5/7: Writing OpenClaw config (skips interactive wizard) ==="
+	@$(OS_ENV) && $(SSH_SANDBOX) 'mkdir -p ~/.openclaw/agents/main/sessions ~/.openclaw/workspace && \
+		cat > ~/.openclaw/openclaw.json << '"'"'JSON'"'"' \
+{ \
+  "wizard": {"lastRunAt": "'"$$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'", "lastRunVersion": "2026.3.11", "lastRunCommand": "onboard", "lastRunMode": "local"}, \
+  "models": {"mode": "merge", "providers": {"nemotron-local": {"baseUrl": "https://inference.local/v1", "apiKey": "ollama", "api": "openai-completions", "models": [{"id": "nemotron-3-super:120b", "name": "nemotron-3-super:120b", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 131072, "maxTokens": 8192}]}}}, \
+  "agents": {"defaults": {"model": {"primary": "nemotron-local/nemotron-3-super:120b"}}}, \
+  "gateway": {"port": 18789, "mode": "local", "bind": "loopback", "auth": {"mode": "token"}, "controlUi": {"allowedOrigins": ["https://spark-caeb.tail48bab7.ts.net", "http://127.0.0.1:18789"]}, "trustedProxies": ["127.0.0.1", "::1"]}, \
+  "channels": {} \
+} \
+JSON' 2>&1
 	@echo ""
-	@echo "  Run: make onboard"
+	@echo "=== Step 6/7: Starting OpenClaw gateway (with auto-restart) ==="
+	@$(MAKE) --no-print-directory start-openclaw
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+		for i in $$(seq 1 15); do \
+			CODE=$$(curl -s -o /dev/null -w "HTTP %{http_code}" http://127.0.0.1:18789/ || true); \
+			if [ "$$CODE" = "HTTP 200" ]; then \
+				echo "$$CODE — gateway up"; \
+				exit 0; \
+			fi; \
+			sleep 1; \
+		done; \
+		echo "Gateway failed to become ready"; \
+		tail -n 50 $(OPENCLAW_GATEWAY_LOG) 2>/dev/null || true; \
+		exit 1' 2>&1
 	@echo ""
-	@echo "  This opens the OpenClaw wizard inside the sandbox."
-	@echo "  Select: QuickStart → Custom Provider → URL: https://inference.local/v1"
-	@echo "  API key: ollama → OpenAI-compatible → Model: nemotron-3-super:120b"
-	@echo "  Skip all optional steps (channels, search, skills, hooks)."
-	@echo ""
-	@echo "  After the wizard completes, run: make post-onboard"
-
-.PHONY: onboard
-onboard: ## Open the OpenClaw onboarding wizard (interactive)
-	@$(OS_ENV) && openshell sandbox connect nemoclaw-main
-
-.PHONY: post-onboard
-post-onboard: ## Finish setup after onboarding: start gateway + forward + approve devices
-	@echo "=== Starting OpenClaw gateway ==="
-	@$(OS_ENV) && $(SSH_SANDBOX) \
-		'pgrep -f "openclaw gateway" > /dev/null && echo "Already running" || \
-		(openclaw gateway run > /tmp/gateway.log 2>&1 & sleep 3 && echo "OpenClaw gateway started")'
-	@echo ""
-	@echo "=== Starting port forward ==="
+	@echo "=== Step 7/7: Starting port forward + configuring agent sandboxes ==="
 	@$(OS_ENV) && openshell forward start 18789 nemoclaw-main --background 2>/dev/null; true
 	@sleep 2
+	@$(MAKE) --no-print-directory _setup-codex
+	@$(MAKE) --no-print-directory _setup-gemini
 	@echo ""
-	@echo "=== Adding Tailscale origin to allowed list ==="
-	@$(OS_ENV) && $(SSH_SANDBOX) 'python3 -c "\
-import json\n\
-f = \"/sandbox/.openclaw/openclaw.json\"\n\
-d = json.load(open(f))\n\
-ui = d.setdefault(\"gateway\", {}).setdefault(\"controlUi\", {})\n\
-origins = ui.setdefault(\"allowedOrigins\", [])\n\
-for o in [\"https://spark-caeb.tail48bab7.ts.net\", \"http://127.0.0.1:18789\"]:\n\
-    if o not in origins: origins.append(o)\n\
-d[\"gateway\"][\"trustedProxies\"] = [\"127.0.0.1\", \"::1\"]\n\
-json.dump(d, open(f, \"w\"), indent=2)\n\
-print(\"Origins + proxies configured\")\n\
-"' 2>&1
-	@echo ""
-	@echo "=== Restarting gateway with new config ==="
-	@$(OS_ENV) && $(SSH_SANDBOX) \
-		'pkill -f "openclaw gateway" ; sleep 2 ; openclaw gateway run > /tmp/gateway.log 2>&1 & sleep 3 && echo "Restarted"'
-	@echo ""
-	@echo "=== Configuring Codex sandbox ==="
+	@echo "=== Setup complete ==="
+	@echo "  UI:     https://spark-caeb.tail48bab7.ts.net/"
+	@echo "  Status: make status"
+	@echo "  Note:   First browser visit needs device approval: make mac-approve"
+
+.PHONY: _setup-codex
+_setup-codex:
 	@$(OS_ENV) && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
 		-o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name codex-dev" \
 		sandbox@openshell-codex-dev '\
 mkdir -p ~/.codex && \
-cat > ~/.codex/config.toml << TOML\n\
-model = "nemotron-3-super:120b"\n\
-model_provider = "nemoclaw"\n\
-approval_policy = "never"\n\
-sandbox_mode = "danger-full-access"\n\
-suppress_unstable_features_warning = true\n\
-\n\
-[model_providers.nemoclaw]\n\
-name = "NemoClaw Local"\n\
-base_url = "https://inference.local/v1"\n\
-env_key = "OPENAI_API_KEY"\n\
-TOML\n\
+printf "[model_providers.nemoclaw]\nname = \"NemoClaw Local\"\nbase_url = \"https://inference.local/v1\"\nenv_key = \"OPENAI_API_KEY\"\n" > ~/.codex/config.toml && \
+sed -i "1i model = \"nemotron-3-super:120b\"\nmodel_provider = \"nemoclaw\"\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nsuppress_unstable_features_warning = true\n" ~/.codex/config.toml && \
 echo "export OPENAI_API_KEY=unused" >> ~/.bashrc && \
 cd /sandbox && git init 2>/dev/null && git config user.email "sandbox@nemoclaw" && git config user.name "sandbox" && \
 echo "Codex configured"' 2>&1
-	@echo ""
-	@echo "=== Installing Gemini CLI ==="
+
+.PHONY: _setup-gemini
+_setup-gemini:
 	@$(OS_ENV) && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
 		-o "ProxyCommand=openshell ssh-proxy --gateway-name openshell --name gemini-dev" \
 		sandbox@openshell-gemini-dev '\
@@ -156,11 +147,17 @@ export PATH=~/.npm-global/bin:$$PATH && \
 npm install -g @google/gemini-cli 2>&1 | tail -1 && \
 echo "export PATH=~/.npm-global/bin:\$$PATH" >> ~/.bashrc && \
 echo "Gemini CLI installed"' 2>&1
+
+.PHONY: onboard
+onboard: ## Open the OpenClaw wizard manually (only if make setup config doesn't work)
+	@$(OS_ENV) && openshell sandbox connect nemoclaw-main
+
+.PHONY: post-onboard
+post-onboard: start-openclaw start-forward _setup-codex _setup-gemini ## Finish after manual onboard
 	@echo ""
 	@echo "=== Done ==="
 	@echo "  UI: https://spark-caeb.tail48bab7.ts.net/"
 	@echo "  Status: make status"
-	@echo "  Mac node: run 'make mac-approve' after Mac node host connects"
 
 .PHONY: mac-approve
 mac-approve: ## Approve pending Mac node pairing requests
@@ -194,10 +191,28 @@ start-forward: ## Start port forward for UI (18789)
 		echo "Forward may already be running"
 
 .PHONY: start-openclaw
-start-openclaw: ## Start OpenClaw gateway inside sandbox
-	@$(OS_ENV) && $(SSH_SANDBOX) \
-		'pgrep -f "openclaw gateway" > /dev/null && echo "Already running" || \
-		(openclaw gateway run > /tmp/gateway.log 2>&1 & echo "OpenClaw gateway started")'
+start-openclaw: ## Start OpenClaw gateway inside sandbox (survives SSH disconnect)
+	@$(OS_ENV) && openshell sandbox upload nemoclaw-main $(OPENCLAW_SUPERVISOR_LOCAL) $(OPENCLAW_SUPERVISOR_REMOTE) >/dev/null
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+		chmod +x $(OPENCLAW_SUPERVISOR_REMOTE) && \
+		if pgrep -af "$(OPENCLAW_SUPERVISOR_REMOTE)" > /dev/null; then \
+			echo "OpenClaw gateway supervisor already running"; \
+		elif pgrep -af "openclaw gateway run" > /dev/null; then \
+			echo "OpenClaw gateway already running without supervisor"; \
+			echo "Run make restart-openclaw to migrate it to supervised mode"; \
+		else \
+			nohup setsid $(OPENCLAW_SUPERVISOR_REMOTE) </dev/null > $(OPENCLAW_SUPERVISOR_LOG) 2>&1 & \
+			echo $$! > $(OPENCLAW_SUPERVISOR_PID) && \
+			echo "OpenClaw gateway supervisor started"; \
+		fi'
+
+.PHONY: restart-openclaw
+restart-openclaw: ## Restart OpenClaw gateway under the sandbox supervisor
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+		pkill -f "$(OPENCLAW_SUPERVISOR_REMOTE)" 2>/dev/null || true; \
+		pkill -f "openclaw gateway run" 2>/dev/null || true; \
+		rm -f $(OPENCLAW_SUPERVISOR_PID)'
+	@$(MAKE) --no-print-directory start-openclaw
 
 .PHONY: start-lmstudio
 start-lmstudio: ## Start LM Studio on Spark (:1234)
