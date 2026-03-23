@@ -20,18 +20,20 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: Sync dependencies
         run: uv sync
 
       - name: Lint (ruff)
-        run: uv run ruff check .
+        run: uv run ruff check . ../orchestrator
 
       - name: Format check (ruff)
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . ../orchestrator
 
       - name: Import sorting (isort)
-        run: uv run isort --check-only .
+        run: uv run isort --check-only . ../orchestrator
 
   typecheck:
     runs-on: ubuntu-latest
@@ -43,12 +45,14 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: Sync dependencies
         run: uv sync
 
       - name: Type check (mypy)
-        run: uv run mypy . --config-file ../pyproject.toml
+        run: uv run mypy . ../orchestrator --config-file ../pyproject.toml
 
   docstrings:
     runs-on: ubuntu-latest
@@ -60,12 +64,14 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: Sync dependencies
         run: uv sync
 
       - name: Docstring check (pydocstyle)
-        run: uv run pydocstyle . --config ../pyproject.toml
+        run: uv run pydocstyle . ../orchestrator --config ../pyproject.toml
 
   syntax:
     runs-on: ubuntu-latest
@@ -77,17 +83,18 @@ jobs:
           python3 -c "
           import ast, glob, sys
           errors = []
-          for f in glob.glob('tests/**/*.py', recursive=True):
-              try:
-                  with open(f) as fh:
-                      ast.parse(fh.read())
-              except SyntaxError as e:
-                  errors.append(f'{f}: {e}')
+          for pattern in ('tests/**/*.py', 'orchestrator/**/*.py'):
+              for f in glob.glob(pattern, recursive=True):
+                  try:
+                      with open(f, encoding='utf-8') as fh:
+                          ast.parse(fh.read())
+                  except SyntaxError as e:
+                      errors.append(f'{f}: {e}')
           if errors:
               for e in errors: print(e, file=sys.stderr)
               sys.exit(1)
           else:
-              print(f'All {len(glob.glob(\"tests/**/*.py\", recursive=True))} Python files OK')
+              print(f'All {len(glob.glob(\"tests/**/*.py\", recursive=True)) + len(glob.glob(\"orchestrator/**/*.py\", recursive=True))} Python files OK')
           "
 
   test-collection:
@@ -100,9 +107,30 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: Sync dependencies
         run: uv sync
 
       - name: Test collection (pytest --collect-only)
         run: uv run pytest --collect-only -q
+
+  phase6-unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Phase 6 unit tests
+        run: uv run pytest phase6_orchestrator -q

@@ -8,7 +8,7 @@ How to start, stop, pause, restart, and manage your NemoClaw deployment day-to-d
 
 **Your deployment status: NOT YET DEPLOYED.**
 
-What exists so far is the validation framework (113 tests), documentation, and CI/CD. To deploy, follow the [Deployment Guide](deployment-guide.md) phase by phase.
+What exists so far is the validation framework (166 tests across pre-flight plus six phases), documentation, and CI/CD. To deploy, follow the [Deployment Guide](deployment-guide.md) phase by phase.
 
 Once deployed, this guide covers ongoing operations.
 

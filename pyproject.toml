@@ -1,18 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "nemoclaw"
 version = "0.1.0"
 description = "TDD deployment framework for NemoClaw multi-node AI infrastructure"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["orchestrator"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["tests"]
+src = ["orchestrator", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.isort]
+known-first-party = ["orchestrator", "tests"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -20,7 +34,8 @@ quote-style = "double"
 [tool.isort]
 profile = "black"
 line_length = 100
-src_paths = ["tests"]
+known_first_party = ["orchestrator", "tests"]
+src_paths = ["orchestrator", "tests"]
 
 [tool.mypy]
 python_version = "3.12"

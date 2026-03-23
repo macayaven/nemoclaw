@@ -199,6 +199,8 @@ class PiSettings(HostSettings):
 class TestSettings(BaseSettings):
     """Root settings object consumed by pytest fixtures."""
 
+    __test__ = False
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",

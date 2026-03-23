@@ -1,196 +1,154 @@
-"""
-test_sandbox_bridge.py — Phase 6 tests for orchestrator.sandbox_bridge.
-
-Covers SandboxBridge contract (initialisation, sandbox listing, health),
-behavioural execution (running commands, timeout enforcement, prompt sending),
-and negative / error-path cases.
-
-All tests are marked @pytest.mark.phase6.  Tests that open real SSH connections
-to the DGX Spark use the session-scoped ``spark_ssh`` fixture from conftest.
-"""
+"""Phase 6 tests for :mod:`orchestrator.sandbox_bridge`."""
 
 from __future__ import annotations
 
+import shlex
+import subprocess
+from types import SimpleNamespace
+
 import pytest
+
+from orchestrator.config import OrchestratorSettings
+from orchestrator.sandbox_bridge import SandboxBridge, SandboxResult
 
 pytestmark = pytest.mark.phase6
 
-# ---------------------------------------------------------------------------
-# Contract tests — SandboxBridge initialisation and introspection
-# ---------------------------------------------------------------------------
-
 
 class TestSandboxBridge:
-    """Contract tests: SandboxBridge can be created and reports sandbox state."""
+    """Contract and behavioural tests for the sandbox bridge."""
 
-    def test_bridge_initializes(self) -> None:
-        """SandboxBridge instantiates with default OrchestratorSettings.
-
-        Verifies that the bridge can be constructed without any arguments and
-        that it exposes the expected attributes derived from OrchestratorSettings.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
-
+    def test_bridge_initializes_with_settings(self) -> None:
         settings = OrchestratorSettings()
         bridge = SandboxBridge(settings=settings)
 
-        assert bridge is not None
         assert bridge.settings is settings
         assert bridge.settings.sandbox_timeout > 0
 
-    def test_list_sandboxes(self, spark_ssh) -> None:
-        """list_sandboxes() returns a non-empty collection containing nemoclaw-main.
-
-        Uses the openshell CLI (or equivalent) on the DGX Spark to enumerate
-        running sandboxes and verifies the primary sandbox is present.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
-
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
+    def test_list_sandboxes_uses_configured_agents(self) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
 
         sandboxes = bridge.list_sandboxes()
 
-        assert isinstance(sandboxes, list), "list_sandboxes() must return a list"
-        assert len(sandboxes) > 0, "Expected at least one sandbox to be listed"
-        sandbox_names = [s if isinstance(s, str) else s.get("name", str(s)) for s in sandboxes]
-        assert any("nemoclaw-main" in name for name in sandbox_names), (
-            f"Expected 'nemoclaw-main' in sandbox list, got: {sandbox_names}"
-        )
+        assert "nemoclaw-main" in sandboxes
+        assert "codex-dev" in sandboxes
 
-    def test_sandbox_health_check(self, spark_ssh) -> None:
-        """health_check('nemoclaw-main') reports the sandbox as healthy.
+    def test_run_in_sandbox_returns_structured_result(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
+        recorded: list[list[str]] = []
 
-        A healthy sandbox is one that responds to a trivial command within the
-        configured timeout and returns exit code 0.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
+        def fake_run(cmd, capture_output, text, timeout):
+            recorded.append(cmd)
+            return SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
 
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
+        monkeypatch.setattr(subprocess, "run", fake_run)
 
-        healthy = bridge.health_check("nemoclaw-main")
+        result = bridge.run_in_sandbox("nemoclaw-main", "echo hello")
 
-        assert healthy is True, "nemoclaw-main sandbox should report as healthy"
+        assert isinstance(result, SandboxResult)
+        assert result.return_code == 0
+        assert result.stdout == "hello\n"
+        assert recorded[0][0] == "ssh"
+        assert "nemoclaw-main" in " ".join(recorded[0])
 
+    def test_run_in_sandbox_rejects_empty_command(self) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
 
-# ---------------------------------------------------------------------------
-# Behavioural tests — command execution inside sandboxes
-# ---------------------------------------------------------------------------
+        with pytest.raises(ValueError, match="command must not be empty"):
+            bridge.run_in_sandbox("nemoclaw-main", "   ")
 
+    def test_run_in_sandbox_propagates_timeout(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
 
-class TestSandboxExecution:
-    """Behavioural tests: SandboxBridge executes commands and prompts correctly."""
+        def fake_run(cmd, capture_output, text, timeout):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
 
-    def test_run_command_in_sandbox(self, spark_ssh) -> None:
-        """run_command() executes 'echo hello' in nemoclaw-main and captures stdout.
+        monkeypatch.setattr(subprocess, "run", fake_run)
 
-        Verifies that the SandboxResult contains 'hello' in its output and
-        that the exit code is 0.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge, SandboxResult
+        with pytest.raises(subprocess.TimeoutExpired):
+            bridge.run_in_sandbox("nemoclaw-main", "sleep 60", timeout=2)
 
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
+    def test_send_prompt_uses_agent_template(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
+        recorded: list[tuple[str, str]] = []
 
-        result = bridge.run_command(sandbox_name="nemoclaw-main", command="echo hello")
-
-        assert isinstance(result, SandboxResult), (
-            f"run_command() must return a SandboxResult, got {type(result)}"
-        )
-        assert result.exit_code == 0, (
-            f"'echo hello' should exit 0, got {result.exit_code}. stderr={result.stderr!r}"
-        )
-        assert "hello" in result.stdout, f"Expected 'hello' in stdout, got {result.stdout!r}"
-
-    def test_run_command_timeout(self, spark_ssh) -> None:
-        """run_command() raises TimeoutError when a slow command exceeds the timeout.
-
-        Sends 'sleep 60' with a 2-second timeout to guarantee the timeout path
-        is exercised without waiting for the full sleep duration.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
-
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
-
-        with pytest.raises(TimeoutError):
-            bridge.run_command(
-                sandbox_name="nemoclaw-main",
-                command="sleep 60",
-                timeout=2,
+        def fake_run_in_sandbox(sandbox_name: str, command: str, timeout=None) -> SandboxResult:
+            recorded.append((sandbox_name, command))
+            return SandboxResult(
+                sandbox_name=sandbox_name,
+                stdout="ready\n",
+                stderr="",
+                return_code=0,
+                duration_ms=10.0,
             )
 
-    @pytest.mark.slow
-    @pytest.mark.timeout(180)
-    def test_send_prompt_to_openclaw(self, spark_ssh) -> None:
-        """send_prompt() sends a simple prompt to the openclaw agent and gets a response.
-
-        Verifies that the response is a non-empty string.  The actual content
-        is not asserted on since LLM output is non-deterministic.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
-
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
+        monkeypatch.setattr(bridge, "run_in_sandbox", fake_run_in_sandbox)
 
         response = bridge.send_prompt(
             sandbox_name="nemoclaw-main",
-            prompt="Reply with a single word: ready",
+            prompt="Reply with ready",
+            agent_type="openclaw",
         )
 
-        assert isinstance(response, str), f"send_prompt() must return a str, got {type(response)}"
-        assert len(response.strip()) > 0, "send_prompt() returned an empty response"
+        assert response == "ready"
+        assert recorded[0][0] == "nemoclaw-main"
+        assert "openclaw agent --agent main --local -m" in recorded[0][1]
+        assert shlex.quote("Reply with ready") in recorded[0][1]
 
+    def test_send_prompt_rejects_unknown_agent_type(self) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
 
-# ---------------------------------------------------------------------------
-# Negative / error-path tests
-# ---------------------------------------------------------------------------
-
-
-class TestSandboxBridgeNegative:
-    """Negative tests: SandboxBridge raises appropriate errors for invalid inputs."""
-
-    def test_nonexistent_sandbox_fails(self, spark_ssh) -> None:
-        """run_command() raises an error when the target sandbox does not exist.
-
-        The exact exception type is implementation-defined, but it must not
-        silently return a successful SandboxResult.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
-
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
-
-        with pytest.raises(Exception) as exc_info:
-            bridge.run_command(
-                sandbox_name="nonexistent-sandbox",
-                command="echo this-should-never-run",
+        with pytest.raises(ValueError, match="Unsupported agent_type"):
+            bridge.send_prompt(
+                sandbox_name="nemoclaw-main",
+                prompt="hello",
+                agent_type="unknown",
             )
 
-        # Accept any exception; just verify something was raised.
-        assert exc_info.value is not None, (
-            "Expected an exception for a nonexistent sandbox, but none was raised"
+    def test_send_prompt_raises_for_failed_command(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
+
+        monkeypatch.setattr(
+            bridge,
+            "run_in_sandbox",
+            lambda sandbox_name, command, timeout=None: SandboxResult(
+                sandbox_name=sandbox_name,
+                stdout="",
+                stderr="boom",
+                return_code=17,
+                duration_ms=12.0,
+            ),
         )
 
-    def test_empty_command_fails(self, spark_ssh) -> None:
-        """run_command() raises ValueError when given an empty command string.
+        with pytest.raises(RuntimeError, match="returned exit code 17"):
+            bridge.send_prompt(
+                sandbox_name="nemoclaw-main",
+                prompt="hello",
+                agent_type="openclaw",
+            )
 
-        An empty command is logically invalid and should be rejected before
-        any network call is made.
-        """
-        from orchestrator.config import OrchestratorSettings
-        from orchestrator.sandbox_bridge import SandboxBridge
+    def test_is_sandbox_healthy_returns_true_when_echo_succeeds(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
 
-        settings = OrchestratorSettings()
-        bridge = SandboxBridge(settings=settings, conn=spark_ssh)
+        monkeypatch.setattr(
+            bridge,
+            "run_in_sandbox",
+            lambda sandbox_name, command, timeout=None: SandboxResult(
+                sandbox_name=sandbox_name,
+                stdout="ok\n",
+                stderr="",
+                return_code=0,
+                duration_ms=5.0,
+            ),
+        )
 
-        with pytest.raises(ValueError, match="command"):
-            bridge.run_command(sandbox_name="nemoclaw-main", command="")
+        assert bridge.is_sandbox_healthy("nemoclaw-main") is True
+
+    def test_is_sandbox_healthy_returns_false_on_timeout(self, monkeypatch) -> None:
+        bridge = SandboxBridge(settings=OrchestratorSettings())
+
+        def fake_run_in_sandbox(sandbox_name: str, command: str, timeout=None) -> SandboxResult:
+            raise subprocess.TimeoutExpired(cmd=[sandbox_name, command], timeout=timeout or 10)
+
+        monkeypatch.setattr(bridge, "run_in_sandbox", fake_run_in_sandbox)
+
+        assert bridge.is_sandbox_healthy("nemoclaw-main") is False

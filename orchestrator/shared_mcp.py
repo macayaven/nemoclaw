@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -131,7 +131,7 @@ class SharedWorkspace:
             "task_id": task_id,
             "agent": agent,
             "content": content,
-            "written_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(UTC).isoformat(),
         }
         target = inbox_dir / f"{task_id}.json"
         target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -184,7 +184,7 @@ class SharedWorkspace:
             "task_id": task_id,
             "agent": agent,
             "content": content,
-            "written_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(UTC).isoformat(),
         }
         target = outbox_dir / f"{task_id}.json"
         target.write_text(json.dumps(payload, indent=2), encoding="utf-8")

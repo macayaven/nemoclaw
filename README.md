@@ -4,7 +4,9 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
-This repository is a **test-driven deployment framework** for running [NemoClaw](https://www.nvidia.com/nemoclaw) — NVIDIA's open-source reference stack for safe, private AI agent execution — across a three-node home lab. It contains the architecture documentation, phase-by-phase action plan, and 113 pytest tests organized across 5 deployment phases. Tests define the expected state of each machine before and after every deployment step; passing all tests in a phase means that phase is complete. The stack runs four AI coding agents (OpenClaw, Claude Code, Codex, Gemini CLI) simultaneously in isolated OpenShell sandboxes, with local Nemotron inference as the default and cloud APIs as an explicit opt-in.
+This repository is a **test-driven deployment framework** for running [NemoClaw](https://www.nvidia.com/nemoclaw) — NVIDIA's open-source reference stack for safe, private AI agent execution — across a three-node home lab. It contains the architecture documentation, phase-by-phase action plan, and 166 pytest tests spanning pre-flight validation plus deployment and orchestration phases. Tests define the expected state of each machine before and after every deployment step; passing all tests in a phase means that phase is complete. The stack runs four AI coding agents (OpenClaw, Claude Code, Codex, Gemini CLI) simultaneously in isolated OpenShell sandboxes, with local Nemotron inference as the default and cloud APIs as an explicit opt-in.
+
+This repository does **not** contain a model-training subsystem or a runnable ML training loop. If you are looking for training-entrypoint, dataloader, optimizer, checkpoint, or resume logic, see [TRAINING-LOOP-BLOCKER.md](TRAINING-LOOP-BLOCKER.md).
 
 ---
 
@@ -181,6 +183,7 @@ uv run pytest tests/phase2_mac/ -v
 uv run pytest tests/phase3_pi/ -v
 uv run pytest tests/phase4_agents/ -v
 uv run pytest tests/phase5_mobile/ -v
+uv run pytest tests/phase6_orchestrator/ -v
 
 # Run the full suite
 uv run pytest -v
@@ -202,14 +205,14 @@ nemoclaw/
 ├── docs/
 │   └── deployment-guide.md          # Consolidated deployment walkthrough
 │
-└── tests/                           # pytest test suite (113 tests across 5 phases)
+└── tests/                           # pytest test suite (166 tests across pre-flight + 6 phases)
     ├── pyproject.toml               # uv project config and pytest markers
     ├── conftest.py                  # Shared fixtures, SSH wrapper, host configs
     ├── settings.py                  # Pydantic BaseSettings — validated env config
     ├── models.py                    # Pydantic models for command output validation
     ├── helpers.py                   # poll_until_ready(), parse_json_output(), etc.
     │
-    ├── phase0_preflight/            # 26 tests — prerequisite checks on all 3 machines
+    ├── phase0_preflight/            # 28 tests — prerequisite checks on all 3 machines
     │   ├── test_spark_prerequisites.py
     │   ├── test_mac_prerequisites.py
     │   └── test_pi_prerequisites.py
@@ -227,14 +230,14 @@ nemoclaw/
     │   ├── test_mac_provider.py
     │   └── test_provider_switching.py
     │
-    ├── phase3_pi/                   # 18 tests — Raspberry Pi infrastructure plane
+    ├── phase3_pi/                   # 20 tests — Raspberry Pi infrastructure plane
     │   ├── test_litellm_proxy.py
     │   ├── test_litellm_degraded.py
     │   ├── test_dns.py
     │   ├── test_monitoring.py
     │   └── test_tailscale_routing.py
     │
-    ├── phase4_agents/               # 22 tests — Coding agent sandboxes
+    ├── phase4_agents/               # 25 tests — Coding agent sandboxes
     │   ├── test_claude_sandbox.py
     │   ├── test_codex_sandbox.py
     │   ├── test_gemini_sandbox.py
@@ -242,9 +245,16 @@ nemoclaw/
     │   ├── test_sandbox_isolation.py
     │   └── test_secret_hygiene.py
     │
-    └── phase5_mobile/               # 4 tests — Tailscale hardening + mobile access
-        ├── test_tailscale_gateway.py
-        └── test_remote_access.py
+    ├── phase5_mobile/               # 4 tests — Tailscale hardening + mobile access
+    │   ├── test_tailscale_gateway.py
+    │   └── test_remote_access.py
+    │
+    └── phase6_orchestrator/         # 47 tests — Orchestrator CLI/runtime/unit validation
+        ├── test_cli.py
+        ├── test_orchestrator.py
+        ├── test_sandbox_bridge.py
+        ├── test_shared_workspace.py
+        └── test_task_manager.py
 ```
 
 ---
@@ -253,12 +263,13 @@ nemoclaw/
 
 | Phase | Directory | Tests | What It Validates |
 |---|---|---|---|
-| **Phase 0 — Pre-flight** | `phase0_preflight/` | 26 | Disk space, Docker 28.04+, NVIDIA container runtime, Ollama + models, Landlock/seccomp/cgroup v2, Node.js 20+, Tailscale connectivity on all 3 machines |
+| **Phase 0 — Pre-flight** | `phase0_preflight/` | 28 | Disk space, Docker 28.04+, NVIDIA container runtime, Ollama + models, Landlock/seccomp/cgroup v2, Node.js 20+, Tailscale connectivity on all 3 machines |
 | **Phase 1 — Core** | `phase1_core/` | 25 | Ollama binding on `0.0.0.0:11434`, OpenShell gateway health, provider registration, inference routing to nemotron-3-super:120b, nemoclaw-main sandbox lifecycle, idempotency of all setup steps |
 | **Phase 2 — Mac Studio** | `phase2_mac/` | 17 | Ollama on Mac serving qwen3:8b, mac-ollama provider registration on Spark gateway, provider switching between Spark and Mac inference endpoints |
-| **Phase 3 — Pi Infra** | `phase3_pi/` | 18 | LiteLLM proxy routing to both machines, degraded-mode fallback behaviour, Pi-hole DNS resolution (`spark.lab`, `mac.lab`, `ai.lab`), Uptime Kuma monitors, Tailscale subnet router |
-| **Phase 4 — Agents** | `phase4_agents/` | 22 | Claude Code sandbox with Anthropic provider, Codex sandbox with local Ollama config, Gemini CLI sandbox with custom network policy, multi-sandbox concurrency, inter-sandbox isolation, secret hygiene (no keys in env of wrong sandbox) |
+| **Phase 3 — Pi Infra** | `phase3_pi/` | 20 | LiteLLM proxy routing to both machines, degraded-mode fallback behaviour, Pi-hole DNS resolution (`spark.lab`, `mac.lab`, `ai.lab`), Uptime Kuma monitors, Tailscale subnet router |
+| **Phase 4 — Agents** | `phase4_agents/` | 25 | Claude Code sandbox with Anthropic provider, Codex sandbox with local Ollama config, Gemini CLI sandbox with custom network policy, multi-sandbox concurrency, inter-sandbox isolation, secret hygiene (no keys in env of wrong sandbox) |
 | **Phase 5 — Mobile** | `phase5_mobile/` | 4 | Tailscale-native gateway binding, remote device reachability via Tailscale IP |
+| **Phase 6 — Orchestrator** | `phase6_orchestrator/` | 47 | Orchestrator CLI behavior, pipeline delegation, sandbox bridge execution, shared workspace messaging, and task manager persistence via offline/unit validation |
 
 Each test file contains two layers: **contract tests** (`@pytest.mark.contract`) that validate config schemas and command output structure without touching real infrastructure, and **behavioral tests** (`@pytest.mark.behavioral`) that hit live endpoints and verify end-to-end flows.
 
@@ -281,7 +292,7 @@ OpenClaw and Codex run on **local inference** — prompts and responses never le
 
 | Document | Description |
 |---|---|
-| [docs/deployment-guide.md](docs/deployment-guide.md) | Full step-by-step deployment walkthrough for all 5 phases |
+| [docs/deployment-guide.md](docs/deployment-guide.md) | Full step-by-step deployment walkthrough for the deployment phases |
 | [docs/operations-guide.md](docs/operations-guide.md) | Start, stop, pause, restart, update, and monitor NemoClaw |
 | [docs/use-cases.md](docs/use-cases.md) | 10 step-by-step use case guides (chat, model switching, sandboxed agents, mobile access, API) |
 | [docs/inter-agent-guide.md](docs/inter-agent-guide.md) | Inter-agent communication, cooperation, and orchestration patterns (Shared MCP, Orchestrator, Shared FS) |

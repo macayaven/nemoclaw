@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "TDD test suite for NemoClaw multi-node deployment"
 requires-python = ">=3.12"
 dependencies = [
+    "nemoclaw",
     "pytest>=8.0",
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.5",
@@ -22,6 +23,9 @@ dependencies = [
     "pydocstyle>=6.3",
 ]
 
+[tool.uv.sources]
+nemoclaw = { path = "..", editable = true }
+
 [tool.pytest.ini_options]
 testpaths = ["."]
 markers = [
@@ -31,6 +35,7 @@ markers = [
     "phase3: Raspberry Pi infrastructure",
     "phase4: Coding agent sandboxes",
     "phase5: Mobile and Tailscale",
+    "phase6: Orchestrator and inter-agent coordination",
     "contract: Layer A contract/schema tests",
     "behavioral: Layer B behavioral/e2e tests",
     "slow: Tests that take >30s (cold starts, model loading)",
