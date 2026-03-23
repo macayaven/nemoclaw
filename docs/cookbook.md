@@ -1753,6 +1753,144 @@ print(response.choices[0].message.content)
 
 ---
 
+## Category 15: Per-Sandbox Model and Provider Management
+
+This is the most misunderstood part of the system. There are THREE different ways models get assigned, and they operate at different levels.
+
+### How Model Assignment Works (Read This First)
+
+```
+Level 1: OpenShell inference route (GLOBAL)
+  openshell inference set --provider X --model Y
+  → Affects ALL sandboxes that call inference.local
+  → Only ONE active route at a time
+  → This is what the main OpenClaw agent uses
+
+Level 2: OpenClaw agent model config (PER-AGENT inside sandbox)
+  openclaw configure --section model
+  → Affects only the OpenClaw agent inside nemoclaw-main
+  → Can override Level 1 by pointing to a cloud provider directly
+  → Uses subscription auth (browser login)
+
+Level 3: Agent-native config (PER-SANDBOX, independent)
+  Codex: ~/.codex/config.toml → has its own provider config
+  Claude Code: uses Anthropic API directly (subscription)
+  Gemini CLI: uses Google API directly (subscription)
+  → Each is completely independent of Levels 1 and 2
+```
+
+**Key rule:** Changing `openshell inference set` changes what `inference.local` resolves to. It does NOT affect Claude Code, Gemini CLI, or Codex (if Codex is configured with its own provider in config.toml).
+
+### Recipe 42: Switch the Global Inference Route (All inference.local Users)
+
+**Why:** Change what model ALL sandboxes using `inference.local` get. This affects the main OpenClaw agent and any sandbox configured to use `inference.local`.
+
+**CLI (from the Spark host):**
+```bash
+# Switch to Nemotron 120B (heavy reasoning, local)
+make use-nemotron
+# or: openshell inference set --provider local-ollama --model nemotron-3-super:120b
+
+# Switch to Qwen Coder (code-focused, local)
+make use-coder
+# or: openshell inference set --provider local-ollama --model qwen3-coder-next:q4_K_M
+
+# Switch to Mac's fast model (sub-second, local)
+make use-mac
+# or: openshell inference set --provider mac-ollama --model qwen3:8b
+
+# Switch to LM Studio (Spark)
+openshell inference set --provider local-lmstudio --model <model-name>
+
+# Switch to NVIDIA Cloud (remote, uses API credits)
+openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
+```
+
+**Verify:**
+```bash
+make route
+# Shows: Provider: local-ollama, Model: nemotron-3-super:120b
+```
+
+**What this changes:** The main OpenClaw agent and any sandbox whose config points to `inference.local`.
+
+**What this does NOT change:** Claude Code (always Anthropic), Gemini CLI (always Google), Codex (if using its own config.toml provider).
+
+### Recipe 43: Switch the Main OpenClaw Agent to a Cloud Model (Subscription)
+
+**Why:** You want the main chat agent to use Claude Opus or Gemini Pro instead of local Nemotron, using your subscription (no API key).
+
+**CLI (inside nemoclaw-main sandbox):**
+```bash
+make connect-openclaw
+# Inside sandbox:
+openclaw configure --section model
+# Select: Anthropic → browser login → claude-opus-4-6
+# Or: Google Gemini → browser login → gemini-2.5-pro
+```
+
+**This ONLY affects the main agent.** Other sandboxes are unaffected.
+
+**Switch back to local:**
+```bash
+openclaw configure --section model
+# Select: Custom Provider
+# URL: https://inference.local/v1
+# API key: ollama
+# Model: nemotron-3-super:120b
+```
+
+### Recipe 44: Change Codex's Model (Independent of Everything Else)
+
+**Why:** You want Codex to use a different model without affecting anything else.
+
+**CLI (inside codex-dev sandbox):**
+```bash
+make connect-codex
+# Inside sandbox:
+vim ~/.codex/config.toml
+```
+
+**Change the model line:**
+```toml
+# Option A: Use a different local model (via inference.local)
+model = "qwen3-coder-next:q4_K_M"
+
+# Option B: Use the Mac's fast model
+# Change provider base_url to Mac:
+[model_providers.nemoclaw]
+name = "Mac Fast"
+base_url = "http://100.116.228.36:11435/v1"
+env_key = "OPENAI_API_KEY"
+# And set: model = "qwen3:8b"
+
+# Option C: Use OpenAI cloud (needs API key)
+model = "o4-mini"
+model_provider = "openai"
+```
+
+**Codex is the most flexible** — it supports Ollama, OpenAI, Gemini, Azure, OpenRouter, Mistral, DeepSeek, xAI, Groq, all via config.toml.
+
+### Recipe 45: Summary — Who Uses What Model
+
+| Sandbox | Default model | How to change | What controls it |
+|---------|--------------|---------------|-----------------|
+| **nemoclaw-main** (OpenClaw) | nemotron-3-super:120b (local) | `openshell inference set` (global) or `openclaw configure --section model` (per-agent) | inference.local → OpenShell route |
+| **claude-dev** (Claude Code) | claude-sonnet-4-6 (cloud) | Browser login inside sandbox, or `ANTHROPIC_API_KEY` | Anthropic subscription (independent) |
+| **codex-dev** (Codex) | nemotron-3-super:120b (local) | Edit `~/.codex/config.toml` inside sandbox | Own config.toml provider (independent) |
+| **gemini-dev** (Gemini CLI) | gemini-2.5-flash (cloud) | Browser login inside sandbox | Google subscription (independent) |
+
+**Can two sandboxes use different models simultaneously?** Yes — because each sandbox has its own model assignment:
+- OpenClaw uses `inference.local` (whatever the global route is)
+- Codex uses its own `config.toml` provider (can point anywhere)
+- Claude and Gemini use their own cloud APIs
+
+So you can have Nemotron on OpenClaw, Qwen Coder on Codex, Claude on Claude Code, and Gemini on Gemini CLI — all at the same time.
+
+**Can I run two different local models simultaneously?** Only if they fit in GPU memory together. Nemotron 120B (94GB) + Qwen Coder (51GB) = 145GB > 128GB Spark memory. You'd need to unload one first. But Nemotron (94GB) + qwen3:8b on Mac (5GB) works because they're on different machines.
+
+---
+
 ## Quick Reference
 
 | I want to... | Recipe | Key command |
@@ -1793,6 +1931,10 @@ print(response.choices[0].message.content)
 | Switch main agent to Gemini (subscription) | 32 | `openclaw configure --section model` → Google → browser login |
 | Understand subscription vs API key auth | 33 | See Recipe 33 comparison table |
 | Use cloud provider without API key | 34 | `openclaw configure --section model` inside sandbox (not `openshell provider`) |
+| Switch global inference route | 42 | `make use-nemotron` / `make use-coder` / `make use-mac` |
+| Switch main agent to Claude/Gemini | 43 | `openclaw configure --section model` inside nemoclaw-main |
+| Change Codex model independently | 44 | Edit `~/.codex/config.toml` inside codex-dev sandbox |
+| See who uses what model | 45 | See Recipe 45 summary table |
 | Access Pi LiteLLM API | 35 | `curl http://100.85.6.21:4000/v1/chat/completions -d '{"model":"..."}' ` |
 | Access Pi-hole DNS admin | 36 | Open `http://100.85.6.21/admin` in browser |
 | Access Uptime Kuma dashboard | 37 | Open `http://100.85.6.21:3001` in browser |
