@@ -1,6 +1,6 @@
 # NemoClaw Multi-Machine Deployment Runbook
 
-*DGX Spark + Mac Studio M4 Max + Raspberry Pi*
+*DGX Spark + Mac Studio M4 Max*
 *Deployed: March 2026 | Last updated: 2026-03-22*
 
 ---
@@ -24,9 +24,9 @@
 
 NemoClaw is NVIDIA's open-source reference stack for running AI agents safely and privately on your own hardware. It wraps agents (OpenClaw, Claude Code, Codex, Gemini CLI) in isolated sandboxes with declarative network policies, routes all inference through a private router that defaults to local models, and provides a unified control plane across multiple machines.
 
-The deployment runs across three machines: a DGX Spark (GB10 Blackwell, 128 GB UMA) that hosts the 120B Nemotron model, four isolated agent sandboxes, and the OpenShell control plane; a Mac Studio (M4 Max, 36 GB) that provides fast secondary inference with Qwen3 8B and the OpenClaw companion app; and a Raspberry Pi that serves as the infrastructure layer with a unified LiteLLM API gateway, Pi-hole DNS, Uptime Kuma monitoring, and Tailscale subnet routing — all connected via Tailscale mesh VPN.
+The deployment runs across two machines: a DGX Spark (GB10 Blackwell, 128 GB UMA) that hosts the 120B Nemotron model, four isolated agent sandboxes, and the OpenShell control plane; and a Mac Studio (M4 Max, 36 GB) that provides fast secondary inference with Google Gemma 4 27B and the OpenClaw companion app — connected via Tailscale mesh VPN.
 
-When fully deployed you get: a browser-based chat interface at `https://spark-caeb.tail48bab7.ts.net/` backed by Nemotron 120B running fully locally; four isolated coding agent sandboxes you can connect to from any terminal; a single API endpoint (`http://100.85.6.21:4000/v1`) that routes to any model on any machine by name; real-time monitoring of all agent activity, network requests, and policy decisions; and the ability to switch inference providers in ~5 seconds without restarting anything.
+When fully deployed you get: a browser-based chat interface at `https://spark-caeb.tail48bab7.ts.net/` backed by Nemotron 120B running fully locally; four isolated coding agent sandboxes you can connect to from any terminal; real-time monitoring of all agent activity, network requests, and policy decisions; and the ability to switch inference providers in ~5 seconds without restarting anything.
 
 ### How to Access Everything
 
@@ -40,10 +40,6 @@ When fully deployed you get: a browser-based chat interface at `https://spark-ca
 | **Use OpenClaw TUI** | `openshell sandbox connect nemoclaw-main` then `openclaw tui` | Terminal | Spark sandbox |
 | **Monitor all agents** | `openshell term` on Spark terminal | Terminal TUI | Spark host |
 | **Switch models** | `openshell inference set --provider <name> --model <model>` | CLI | Spark host |
-| **Call any model via API** | `curl http://100.85.6.21:4000/v1/chat/completions -d '{"model":"..."}'` | REST API | Pi (LiteLLM) |
-| **See available models** | `curl http://100.85.6.21:4000/v1/models` | REST API | Pi (LiteLLM) |
-| **Check uptime** | Open `http://100.85.6.21:3001` in browser | Web dashboard | Pi |
-| **Manage DNS** | Open `http://100.85.6.21/admin` in browser | Web dashboard | Pi |
 | **Delegate to agents** | `python -m orchestrator delegate --agent codex --prompt "..."` | CLI | Spark host |
 | **Run agent pipeline** | `python -m orchestrator pipeline --steps "gemini:research,codex:implement"` | CLI | Spark host |
 | **Mac companion status** | `openclaw node status` on Mac terminal | CLI | Mac |
@@ -58,7 +54,6 @@ When fully deployed you get: a browser-based chat interface at `https://spark-ca
 | Spark Ollama | `http://100.93.220.104:11434/v1/chat/completions` | OpenAI-compatible JSON | None |
 | Spark LM Studio | `http://100.93.220.104:1234/v1/chat/completions` | OpenAI + Anthropic JSON | None |
 | Mac Ollama | `http://100.116.228.36:11435/v1/chat/completions` | OpenAI-compatible JSON | None |
-| Pi LiteLLM (unified) | `http://100.85.6.21:4000/v1/chat/completions` | OpenAI-compatible JSON | API key if configured |
 | Sandbox inference | `https://inference.local/v1/chat/completions` | OpenAI-compatible JSON | Injected by OpenShell |
 
 **API usage examples:**
@@ -69,19 +64,14 @@ curl http://100.93.220.104:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"nemotron-3-super:120b", "messages":[{"role":"user","content":"hello"}]}'
 
-# Chat with qwen3:8b on Mac (fast responses)
+# Chat with gemma4:27b on Mac (fast responses)
 curl http://100.116.228.36:11435/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3:8b", "messages":[{"role":"user","content":"hello"}]}'
-
-# Use LiteLLM unified endpoint — routes to right machine by model name
-curl http://100.85.6.21:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"nemotron-3-super:120b", "messages":[{"role":"user","content":"hello"}]}'
+  -d '{"model":"gemma4:27b", "messages":[{"role":"user","content":"hello"}]}'
 
 # Use from Python (any machine on Tailscale)
 from openai import OpenAI
-client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+client = OpenAI(base_url="http://100.93.220.104:11434/v1", api_key="unused")
 response = client.chat.completions.create(
     model="nemotron-3-super:120b",
     messages=[{"role": "user", "content": "What is NemoClaw?"}],
@@ -99,7 +89,7 @@ print(response.choices[0].message.content)
 graph TB
     subgraph Spark["DGX Spark — 100.93.220.104"]
         direction TB
-        Ollama_S["Ollama :11434\nnemotron-3-super:120b\nqwen3-coder-next:q4_K_M"]
+        Ollama_S["Ollama :11434\nnemotron-3-super:120b"]
         LMS_S["LM Studio :1234\nAnthropicAPI+OpenAIAPI"]
         GW["OpenShell Gateway :8080\nk3s cluster inside Docker"]
         IL["inference.local\nvirtual proxy endpoint"]
@@ -120,7 +110,7 @@ graph TB
 
     subgraph Mac["Mac Studio — 100.116.228.36"]
         direction TB
-        Ollama_M["Ollama :11434\nqwen3:8b\nmanaged by Cursor IDE"]
+        Ollama_M["Ollama :11434\ngemma4:27b\nmanaged by Cursor IDE"]
         Fwd["TCP Forwarder :11435\npython3 socket bridge\n0.0.0.0:11435 -> 127.0.0.1:11434"]
         App["OpenClaw.app\nmenu bar companion"]
         Cursor["Cursor IDE\nembeds Ollama on :11434"]
@@ -128,21 +118,10 @@ graph TB
         Ollama_M --> Fwd
     end
 
-    subgraph Pi["Raspberry Pi — 100.85.6.21"]
-        direction TB
-        LiteLLM["LiteLLM :4000\nunified API gateway\nvenv: ~/litellm-env"]
-        Pihole["Pi-hole\nDNS: spark.lab, mac.lab, ai.lab"]
-        Kuma["Uptime Kuma :3001\nmonitoring dashboard"]
-        TS_Router["Tailscale subnet router\n192.168.1.0/24"]
-    end
-
     TS["Tailscale Mesh VPN\nhttps://spark-caeb.tail48bab7.ts.net/"]
 
     Spark <-->|Tailscale| TS
     Mac <-->|Tailscale| TS
-    Pi <-->|Tailscale| TS
-    LiteLLM -->|"Tailscale 100.93.220.104:11434"| Ollama_S
-    LiteLLM -->|"Tailscale 100.116.228.36:11435"| Fwd
     GW -->|"mac-ollama provider"| Fwd
 ```
 
@@ -201,7 +180,7 @@ graph TB
 
     subgraph L3["Layer 3 — Private Inference Router (inference.local)"]
         direction LR
-        LM["Local Models\nDEFAULT\nNemotron 120B\nQwen Coder\nqwen3:8b\ndata stays on hardware"]
+        LM["Local Models\nDEFAULT\nNemotron 120B\nNemotron\ngemma4:27b\ndata stays on hardware"]
         FM["Frontier Models\nOPT-IN ONLY\nClaude / GPT-4\nNVIDIA Cloud\ndata sent to cloud"]
     end
 
@@ -254,8 +233,8 @@ graph TB
 
         subgraph InferenceLayer["Private Inference Router"]
             IR["Inference Router\n(inference.local)"]
-            LocalLLM["Local LLMs\nNemotron 120B (Ollama :11434)\nQwen3 Coder (Ollama :11434)\nLM Studio models (:1234)"]
-            MacLLM["Remote LLM\nQwen3 8B (Mac :11435)\nvia Tailscale"]
+            LocalLLM["Local LLMs\nNemotron 120B (Ollama :11434)\nNemotron (Ollama :11434)\nLM Studio models (:1234)"]
+            MacLLM["Remote LLM\nGemma 4 27B (Mac :11435)\nvia Tailscale"]
         end
 
         subgraph SandboxLayer["Sandbox Supervisor"]
@@ -319,7 +298,7 @@ graph TB
 
     subgraph Router["Layer 3: Private Inference Router"]
         direction LR
-        R1["Local Open Models\n(DEFAULT)\nNemotron 120B\nQwen Coder\nQwen3 8B"]
+        R1["Local Open Models\n(DEFAULT)\nNemotron 120B\nNemotron\nGemma 4 27B"]
         R2["Frontier Models\n(OPT-IN ONLY)\nClaude Opus\nGemini Pro\nGPT-4.1"]
     end
 
@@ -408,7 +387,7 @@ Before starting, verify the following on each machine:
 docker --version           # 29.x or newer
 node --version             # v20 or newer
 python3 --version          # 3.11 or newer
-ollama list                # nemotron-3-super:120b and qwen3-coder-next:q4_K_M present
+ollama list                # nemotron-3-super:120b present
 lms --version              # LM Studio CLI installed
 tailscale status           # Connected (IP: 100.93.220.104)
 df -h /                    # Verify sufficient disk space (models are large)
@@ -418,17 +397,9 @@ nvidia-smi                 # GPU visible, driver loaded
 **Mac Studio**
 
 ```bash
-ollama list                # qwen3:8b (or pull it: /usr/local/bin/ollama pull qwen3:8b)
+ollama list                # gemma4:27b (or pull it: /usr/local/bin/ollama pull gemma4:27b)
 tailscale status           # Connected (IP: 100.116.228.36)
 python3 --version          # 3.x for TCP forwarder
-```
-
-**Raspberry Pi**
-
-```bash
-tailscale status           # Connected (IP: 100.85.6.21)
-python3 --version          # 3.x for LiteLLM
-free -h                    # ~2.2 GB available — LiteLLM runs fine at ~300 MB
 ```
 
 **Docker cgroup v2 fix (CRITICAL — from official NemoClaw guide)**
@@ -540,7 +511,7 @@ openshell status
 The hostname `host.openshell.internal` resolves to the gateway host from inside sandboxes. Never use `localhost` or `127.0.0.1` in provider URLs — containers cannot reach those.
 
 ```bash
-# Primary: Ollama (Nemotron 120B, Qwen Coder)
+# Primary: Ollama (Nemotron 120B, Nemotron)
 openshell provider create \
     --name local-ollama \
     --type openai \
@@ -666,7 +637,7 @@ The Mac Studio's Ollama is managed by the Ollama.app GUI, which also feeds model
 
 ```bash
 ssh carlos@100.116.228.36
-/usr/local/bin/ollama pull qwen3:8b
+/usr/local/bin/ollama pull gemma4:27b
 ```
 
 #### Step 2.2: Start TCP Forwarder on Mac
@@ -724,8 +695,8 @@ openshell provider create \
 Test provider switching:
 
 ```bash
-# Switch to Mac (fast, 8B model)
-openshell inference set --provider mac-ollama --model qwen3:8b
+# Switch to Mac (fast, 27B model)
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Switch back to Spark (heavy, 120B model)
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
@@ -882,119 +853,9 @@ For mobile access, install the OpenClaw iOS app via TestFlight (official) or GoC
 
 ---
 
-### Phase 3: Raspberry Pi — Infrastructure Services
+### Phase 3: Agent Sandboxes
 
-#### Step 3.1: LiteLLM Proxy
-
-LiteLLM provides a single API endpoint that routes to any machine by model name. Run in a Python venv — do not install system-wide.
-
-```bash
-# On the Pi:
-python3 -m venv ~/litellm-env
-source ~/litellm-env/bin/activate
-pip install "litellm[proxy]"
-
-mkdir -p ~/litellm
-cat > ~/litellm/config.yaml << 'EOF'
-model_list:
-  - model_name: "nemotron-3-super:120b"
-    litellm_params:
-      model: "ollama/nemotron-3-super:120b"
-      api_base: "http://100.93.220.104:11434"
-  - model_name: "qwen3-coder-next:q4_K_M"
-    litellm_params:
-      model: "ollama/qwen3-coder-next:q4_K_M"
-      api_base: "http://100.93.220.104:11434"
-  - model_name: "qwen3:8b"
-    litellm_params:
-      model: "ollama/qwen3:8b"
-      api_base: "http://100.116.228.36:11435"
-EOF
-```
-
-Create systemd service:
-
-```bash
-sudo tee /etc/systemd/system/litellm.service << 'EOF'
-[Unit]
-Description=LiteLLM Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/litellm
-ExecStart=/home/pi/litellm-env/bin/litellm --config /home/pi/litellm/config.yaml --port 4000 --host 0.0.0.0
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable litellm
-sudo systemctl start litellm
-```
-
-Verify:
-
-```bash
-curl http://100.85.6.21:4000/health
-curl http://100.85.6.21:4000/v1/models
-```
-
-**Pi RAM note:** The Pi has ~2.2 GB available. LiteLLM proxy uses ~300 MB. Pi-hole uses ~80 MB. Uptime Kuma uses ~150 MB. Total headroom is adequate but do not install additional heavy services.
-
-#### Step 3.2: Pi-hole DNS
-
-Pi-hole provides local DNS so you can use `spark.lab`, `mac.lab`, and `ai.lab` instead of Tailscale IPs.
-
-```bash
-curl -sSL https://install.pi-hole.net | bash
-# Follow the interactive installer
-# After install, add local DNS records via the web UI at http://100.85.6.21/admin
-```
-
-Add DNS records in the Pi-hole admin panel (Settings > DNS > Local DNS Records):
-
-| Domain | IP |
-|--------|----|
-| `spark.lab` | `100.93.220.104` |
-| `mac.lab` | `100.116.228.36` |
-| `ai.lab` | `100.85.6.21` |
-
-#### Step 3.3: Uptime Kuma
-
-```bash
-# On the Pi:
-npm install -g pm2
-npm install -g uptime-kuma
-pm2 start uptime-kuma -- --port 3001
-pm2 save
-pm2 startup
-```
-
-Access at `http://100.85.6.21:3001`. Add monitors for:
-- Spark Ollama: `http://100.93.220.104:11434/api/tags`
-- Spark OpenShell: `http://100.93.220.104:8080/health`
-- Spark OpenClaw UI: `http://100.93.220.104:18789`
-- Mac TCP Forwarder: TCP `100.116.228.36:11435`
-- LiteLLM Proxy: `http://100.85.6.21:4000/health`
-
-#### Step 3.4: Tailscale Subnet Router
-
-```bash
-sudo tailscale up --advertise-routes=192.168.1.0/24 --accept-routes
-```
-
-Then approve the route in the Tailscale admin console at `https://login.tailscale.com/admin/machines`. This makes the entire `192.168.1.0/24` LAN accessible to all Tailscale devices through the Pi.
-
----
-
-### Phase 4: Agent Sandboxes
-
-#### Step 4.1: Claude Code Sandbox
+#### Step 3.1: Claude Code Sandbox
 
 ```bash
 # On the Spark:
@@ -1010,7 +871,7 @@ openshell sandbox connect claude-dev
 exit
 ```
 
-#### Step 4.2: Codex Sandbox
+#### Step 3.2: Codex Sandbox
 
 ```bash
 openshell sandbox create --keep --name codex-dev --auto-providers -- bash
@@ -1052,7 +913,7 @@ codex login
 exit
 ```
 
-#### Step 4.3: Gemini CLI Sandbox
+#### Step 3.3: Gemini CLI Sandbox
 
 ```bash
 openshell sandbox create --keep --name gemini-dev --auto-providers -- bash
@@ -1080,7 +941,7 @@ gemini
 exit
 ```
 
-#### Step 4.4: Final Sandbox State Verification
+#### Step 3.4: Final Sandbox State Verification
 
 ```bash
 openshell sandbox list
@@ -1098,7 +959,7 @@ gemini-dev     Ready    -        --keep --auto-providers
 
 ---
 
-### Phase 5: Tailscale Serve
+### Phase 4: Tailscale Serve
 
 Expose the OpenClaw UI to the internet via Tailscale Serve (encrypted, authenticated):
 
@@ -1125,7 +986,7 @@ tailscale funnel --bg 18789
 
 ---
 
-### Phase 6: Orchestrator
+### Phase 5: Orchestrator
 
 The orchestrator runs outside all sandboxes and delegates tasks to agent sandboxes
 through the checked-in `orchestrator` Python package.
@@ -1198,9 +1059,6 @@ lms server stop
 
 # 5. Stop Mac TCP forwarder
 ssh carlos@100.116.228.36 "pkill -f '0.0.0.0.*11435'"
-
-# 6. Stop Pi services (optional — they are lightweight)
-ssh pi@100.85.6.21 "sudo systemctl stop litellm"
 ```
 
 ### Stop Individual Components
@@ -1216,9 +1074,6 @@ openshell sandbox delete codex-dev
 # Free GPU memory without stopping Ollama (model unloads, cold start on next request)
 curl http://localhost:11434/api/generate \
     -d '{"model": "nemotron-3-super:120b", "keep_alive": 0}'
-
-# Stop just LiteLLM on Pi (direct Ollama access still works)
-ssh pi@100.85.6.21 "sudo systemctl stop litellm"
 ```
 
 ### Pause Inference (Keep Gateway Running, Unload Models)
@@ -1229,10 +1084,6 @@ Use this when you want to preserve the full NemoClaw setup but free GPU memory t
 # Unload the 120B model from GPU memory (~86 GB freed)
 curl http://localhost:11434/api/generate \
     -d '{"model": "nemotron-3-super:120b", "keep_alive": 0}'
-
-# Unload the coder model if also loaded
-curl http://localhost:11434/api/generate \
-    -d '{"model": "qwen3-coder-next:q4_K_M", "keep_alive": 0}'
 
 # Verify GPU memory is freed:
 nvidia-smi
@@ -1358,25 +1209,11 @@ sleep 5
 open -a Cursor    # SECOND
 ```
 
-#### Raspberry Pi Boot Order
-
-No special order needed — all Pi services are systemd and auto-start independently:
-
-```bash
-# Verify after reboot
-ssh carlos@100.85.6.21 '
-  systemctl status litellm
-  systemctl status pihole-FTL
-  tailscale status | head -3
-'
-```
-
-#### Full System Boot Sequence (all machines)
+#### Full System Boot Sequence (both machines)
 
 ```
 1. Spark: Ollama (auto) → LM Studio → OpenShell gateway → port forward → OpenClaw gateway
 2. Mac:   Ollama.app FIRST → Cursor SECOND → TCP forwarder → node host (auto via launchd)
-3. Pi:    All auto (LiteLLM, Pi-hole, Uptime Kuma, Tailscale)
 ```
 
 ### Restart Mac TCP Forwarder
@@ -1407,9 +1244,6 @@ while True:
     threading.Thread(target=forward, args=(upstream, client), daemon=True).start()
 " &
 exit
-
-# Step 6: Verify Pi services (auto-start via systemd)
-ssh pi@100.85.6.21 "systemctl status litellm"
 ```
 
 ---
@@ -1494,32 +1328,7 @@ rm -rf ~/workspace/nemoclaw/orchestrator-env
 rm -rf ~/workspace/nemoclaw/orchestrator/
 ```
 
-### 8. Clean Up Pi Services
-
-```bash
-ssh pi@100.85.6.21
-
-# Stop and disable LiteLLM
-sudo systemctl stop litellm
-sudo systemctl disable litellm
-sudo rm /etc/systemd/system/litellm.service
-sudo systemctl daemon-reload
-
-# Remove LiteLLM venv and config
-rm -rf ~/litellm-env ~/litellm
-
-# Stop Uptime Kuma (if using pm2)
-pm2 stop uptime-kuma
-pm2 delete uptime-kuma
-
-# Revert Tailscale subnet routing
-sudo tailscale up --advertise-routes="" --accept-routes=false
-
-# Pi-hole removal (if needed)
-pihole uninstall
-```
-
-### 9. Clean Up Mac TCP Forwarder
+### 8. Clean Up Mac TCP Forwarder
 
 ```bash
 ssh carlos@100.116.228.36
@@ -1529,7 +1338,7 @@ pkill -f "0.0.0.0.*11435"
 ss -tlnp | grep 11435
 ```
 
-### 10. Revoke Tailscale Serve
+### 9. Revoke Tailscale Serve
 
 ```bash
 # On Spark:
@@ -1544,7 +1353,6 @@ tailscale funnel --remove 18789
 | Ollama and downloaded models | Yes | Models are large (86 GB for Nemotron); re-download is slow |
 | LM Studio and its models | Yes | Same reason |
 | Tailscale installation | Yes | Needed for network access |
-| Pi-hole | Yes | Useful independently |
 | OpenShell venv | Delete | Recreated on redeploy |
 | NemoClaw CLI | Your choice | Small, easy to reinstall |
 | Sandbox data in `/sandbox` | Delete with gateway destroy | Ephemeral by design |
@@ -1615,7 +1423,7 @@ Switching inference providers while an agent has an active conversation works, b
 
 ```bash
 # Switch provider (takes ~5 seconds)
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Verify the switch:
 openshell inference get
@@ -1677,21 +1485,6 @@ ssh carlos@100.116.228.36 "python3 /path/to/forwarder.py &"
 ```
 
 Permanent fix (future work): Create a launchd plist at `~/Library/LaunchAgents/com.nemoclaw.forwarder.plist`.
-
-### Pi RAM Limits (~2.2 GB Available)
-
-The Raspberry Pi has 3.7 GB total, ~2.2 GB available after OS overhead. Current usage:
-- LiteLLM proxy: ~300 MB
-- Pi-hole: ~80 MB
-- Uptime Kuma: ~150 MB
-- Available: ~1.7 GB
-
-Do not run Docker on the Pi — it would exhaust RAM. Do not install large Python packages system-wide. Keep everything in venvs.
-
-```bash
-# Monitor Pi RAM:
-ssh pi@100.85.6.21 "free -h && ps aux --sort=-%mem | head -10"
-```
 
 ### API Key Security (Subscription Auth, Not Raw Keys)
 
@@ -1850,7 +1643,7 @@ openshell gateway start
 openshell sandbox create --keep --forward 18789 --name my-agent --from openclaw -- openclaw-start
 
 # Switch inference to Mac's fast model
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Watch what all sandboxes are doing in real time
 openshell term
@@ -1931,7 +1724,7 @@ ollama list
 
 # Pull a new model
 ollama pull nemotron-3-super:120b
-ollama pull qwen3:8b
+ollama pull gemma4:27b
 
 # Run a model interactively (testing only — use inference.local in production)
 ollama run nemotron-3-super:120b
@@ -2004,7 +1797,7 @@ python -m orchestrator --json status
 
 ### 7.7 tailscale CLI
 
-Network management across all three machines.
+Network management across both machines.
 
 ```bash
 # Check connection status and peer IPs
@@ -2025,51 +1818,9 @@ tailscale serve --remove 18789
 # SSH to another Tailscale device (using MagicDNS)
 tailscale ssh carlos@spark-caeb
 tailscale ssh carlos@100.116.228.36
-
-# Advertise local subnet routes (run on Pi)
-sudo tailscale up --advertise-routes=192.168.1.0/24 --accept-routes
 ```
 
-### 7.8 LiteLLM API
-
-The Pi runs LiteLLM as a unified API proxy. Any OpenAI-compatible client can point at it.
-
-```bash
-# Check proxy health
-curl http://100.85.6.21:4000/health
-
-# List available models
-curl http://100.85.6.21:4000/v1/models
-
-# Chat completions — model routing is automatic based on model name
-curl http://100.85.6.21:4000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "model": "nemotron-3-super:120b",
-        "messages": [{"role": "user", "content": "hello"}]
-    }'
-
-# Route to Mac's fast model by name
-curl http://100.85.6.21:4000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{"model": "qwen3:8b", "messages": [{"role": "user", "content": "ping"}]}'
-
-# Use from Python
-python3 - << 'EOF'
-from openai import OpenAI
-client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="nemotron-3-super:120b",
-    messages=[{"role": "user", "content": "what is 2+2?"}],
-)
-print(response.choices[0].message.content)
-EOF
-
-# Reload config without restarting
-sudo systemctl reload litellm
-```
-
-### 7.9 openshell term (TUI Monitor)
+### 7.8 openshell term (TUI Monitor)
 
 Real-time dashboard showing all sandbox activity. Launch from the Spark host:
 
@@ -2095,26 +1846,7 @@ Keyboard shortcuts inside the TUI:
 | `L` | Toggle log view |
 | `Q` | Quit |
 
-### 7.10 Uptime Kuma (Web Dashboard)
-
-Browser-based uptime monitoring. Access at `http://100.85.6.21:3001`.
-
-What it monitors:
-- Spark Ollama: `http://100.93.220.104:11434/api/tags` (HTTP 200)
-- Spark OpenShell Gateway: `http://100.93.220.104:8080/health`
-- Spark OpenClaw UI: `http://100.93.220.104:18789` (HTTP 200)
-- Mac TCP Forwarder: TCP `100.116.228.36:11435`
-- LiteLLM Proxy: `http://100.85.6.21:4000/health`
-
-To add a new monitor:
-1. Log in at `http://100.85.6.21:3001`
-2. Click "Add New Monitor"
-3. Choose type (HTTP/TCP/keyword)
-4. Set the URL, interval (60s recommended), and alert contacts
-
-Alerts can be configured for email, Telegram, Slack, and others via Notification settings.
-
-### 7.11 OpenClaw.app (Mac Companion)
+### 7.9 OpenClaw.app (Mac Companion)
 
 Native macOS menu-bar app that connects to the NemoClaw gateway via WebSocket.
 
@@ -2140,7 +1872,7 @@ The agent can run AppleScript commands on your Mac (requires Accessibility permi
 Get macOS notifications when the agent completes long-running tasks
 ```
 
-### 7.12 iOS App (Mobile Companion)
+### 7.10 iOS App (Mobile Companion)
 
 Access NemoClaw from your iPhone. Install via TestFlight (official) or GoClaw/ClawOn (App Store).
 
@@ -2201,7 +1933,7 @@ openshell sandbox connect codex-dev
 For quick questions during the day, switch to the Mac's faster model:
 
 ```bash
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 # ... get quick answers ...
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
 ```
@@ -2283,17 +2015,13 @@ source ~/workspace/nemoclaw/openshell-env/bin/activate
 ollama list
 # NAME                              ID              SIZE
 # nemotron-3-super:120b             ...             86 GB  (Spark)
-# qwen3-coder-next:q4_K_M           ...             51 GB  (Spark)
-# qwen3:8b                          ...             5 GB   (Mac)
+# gemma4:27b                         ...             17 GB  (Mac)
 
-# Heavy reasoning tasks — use Nemotron 120B
+# Heavy reasoning + code generation — use Nemotron 120B
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
 
-# Code generation tasks — use Qwen Coder
-openshell inference set --provider local-ollama --model qwen3-coder-next:q4_K_M
-
-# Quick questions, low latency — use Mac's Qwen3 8B
-openshell inference set --provider mac-ollama --model qwen3:8b
+# Quick questions, low latency — use Mac's Gemma 4 27B
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # NVIDIA Cloud (requires NVIDIA account) — for comparison
 openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
@@ -2340,26 +2068,16 @@ du -sh ~/.lmstudio/models/
 ssh carlos@100.116.228.36 "ss -tlnp | grep 11435"
 # If not showing, restart it (see Phase 2, Step 2.2)
 
-# 5. Pi services
-ssh pi@100.85.6.21 "systemctl status litellm && free -h"
-curl http://100.85.6.21:4000/health
-
-# 6. End-to-end inference test
+# 5. End-to-end inference test
 openshell sandbox connect nemoclaw-main
 curl -s https://inference.local/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{"model":"nemotron-3-super:120b","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
 exit
 
-# 7. Full test suite (if you want formal validation)
+# 6. Full test suite (if you want formal validation)
 cd ~/workspace/nemoclaw
 uv run pytest tests/phase1_core/ -v
-```
-
-Check the Uptime Kuma dashboard for historical uptime:
-
-```
-http://100.85.6.21:3001
 ```
 
 ---
@@ -2509,20 +2227,6 @@ curl -fsSL https://lmstudio.ai/install.sh | bash
 
 **Risk:** Low.
 
-### Update LiteLLM (Pi)
-
-```bash
-ssh carlos@100.85.6.21
-source ~/litellm-env/bin/activate
-pip install --upgrade litellm
-sudo systemctl restart litellm
-
-# Verify
-curl http://localhost:4000/health
-```
-
-**Risk:** Low. Config file (`~/litellm/config.yaml`) is separate from the binary.
-
 ### Update Tailscale
 
 ```bash
@@ -2530,10 +2234,6 @@ curl http://localhost:4000/health
 sudo tailscale update
 
 # Mac: update via Mac App Store or download from tailscale.com
-
-# Pi
-ssh carlos@100.85.6.21
-sudo tailscale update
 ```
 
 **Risk:** Low. Tailscale updates are backwards-compatible.
@@ -2552,7 +2252,7 @@ openshell sandbox create --keep --name codex-dev --auto-providers -- bash
 # Re-apply configuration (Codex example)
 make connect-codex
 # Inside: reinstall and configure from scratch
-# (follow Phase 4 in the deployment guide)
+# (follow Phase 3 in the deployment guide)
 ```
 
 ### Rollback
@@ -2577,14 +2277,13 @@ openclaw gateway run > /tmp/gateway.log 2>&1 &
 If you're updating all components at once:
 
 ```
-1. Tailscale (all machines) — networking must work first
+1. Tailscale (both machines) — networking must work first
 2. Ollama (Spark, then Mac) — inference engine
 3. LM Studio (Spark, then Mac) — secondary engine
 4. OpenShell — gateway and sandbox runtime
 5. OpenClaw — agent inside sandbox
 6. NemoClaw CLI — orchestration wrapper
 7. Coding agents (Claude, Codex, Gemini) — each in their sandbox
-8. LiteLLM (Pi) — proxy layer (update last, least critical)
 ```
 
 Always run `make status` after each step to verify nothing broke.
@@ -2596,8 +2295,8 @@ Always run `make status` after each step to verify nothing broke.
 - [ ] Replace TCP forwarder with proper Ollama binding on Mac — create a `launchd` plist that starts Ollama with `OLLAMA_HOST=0.0.0.0` on login, so no manual forwarder restart is needed after reboot
 - [ ] Add vLLM/TensorRT-LLM for production throughput on Spark — vLLM supports continuous batching and PagedAttention which doubles token throughput vs Ollama for multi-user workloads
 - [ ] Implement MCP server sharing across agents — run a filesystem MCP server outside sandboxes and mount a shared workspace into all four sandboxes so agents can pass files to each other
-- [ ] Add Grafana + Prometheus for GPU/inference metrics — scrape `nvidia-smi`, Ollama's `/api/ps`, and LiteLLM's metrics endpoint; display in a dashboard alongside Uptime Kuma
-- [ ] Create Ansible playbook for automated deployment — encode all Phase 1-6 steps as idempotent Ansible tasks so the entire stack can be reproduced with one command
+- [ ] Add Grafana + Prometheus for GPU/inference metrics — scrape `nvidia-smi` and Ollama's `/api/ps`; display in a unified monitoring dashboard
+- [ ] Create Ansible playbook for automated deployment — encode all Phase 1-5 steps as idempotent Ansible tasks so the entire stack can be reproduced with one command
 - [ ] Add Claude Code and Gemini as orchestrator targets (need subscription auth) — the current orchestrator calls `openshell sandbox connect` which requires interactive auth; automate with token-based session continuation
 - [ ] Persistent orchestrator as a systemd service — run the orchestrator as a long-lived process that listens on a local socket and accepts task delegation requests from any tool
 - [ ] Implement the Shared MCP filesystem pattern — the recommended first step toward full inter-agent cooperation; requires mounting `~/workspace/shared-agents` into each sandbox and configuring each agent's MCP settings
@@ -2614,7 +2313,6 @@ Always run `make status` after each step to verify nothing broke.
 |---------|-------------|----------|------|
 | DGX Spark | `100.93.220.104` | `spark-caeb.tail48bab7.ts.net` | Inference + gateway |
 | Mac Studio | `100.116.228.36` | `mac-studio.local` | Secondary inference + dev |
-| Raspberry Pi | `100.85.6.21` | `raspi.local` | Infrastructure control plane |
 
 ### Ports
 
@@ -2626,9 +2324,6 @@ Always run `make status` after each step to verify nothing broke.
 | OpenClaw UI | Spark | `18789` | HTTP / WebSocket |
 | Ollama (via Cursor) | Mac | `11434` | HTTP (local only) |
 | TCP Forwarder | Mac | `11435` | TCP proxy to `:11434` |
-| LiteLLM Proxy | Pi | `4000` | HTTP (OpenAI-compatible) |
-| Uptime Kuma | Pi | `3001` | HTTP |
-| Pi-hole Admin | Pi | `80` | HTTP |
 
 ### URLs
 
@@ -2637,9 +2332,6 @@ Always run `make status` after each step to verify nothing broke.
 | OpenClaw UI (local) | `http://127.0.0.1:18789` |
 | OpenClaw UI (Tailscale) | `http://100.93.220.104:18789` |
 | OpenClaw UI (public Serve) | `https://spark-caeb.tail48bab7.ts.net/` |
-| LiteLLM API | `http://100.85.6.21:4000/v1` |
-| Uptime Kuma | `http://100.85.6.21:3001` |
-| Pi-hole Admin | `http://100.85.6.21/admin` |
 | Ollama (Spark, direct) | `http://100.93.220.104:11434` |
 | Ollama (Mac, via forwarder) | `http://100.116.228.36:11435` |
 | Mac Node Host | `openclaw node status` | Companion service on Mac |
@@ -2662,8 +2354,8 @@ openshell sandbox connect gemini-dev                      # Gemini shell
 
 # --- INFERENCE SWITCHING ---
 openshell inference set --provider local-ollama --model nemotron-3-super:120b   # Heavy
-openshell inference set --provider local-ollama --model qwen3-coder-next:q4_K_M # Coder
-openshell inference set --provider mac-ollama --model qwen3:8b                  # Fast
+openshell inference set --provider local-ollama --model nemotron-3-super:120b # Coder
+openshell inference set --provider mac-ollama --model gemma4:27b                 # Fast
 openshell inference get                                   # Check current
 
 # --- MONITORING ---
@@ -2676,11 +2368,6 @@ ollama ps                                                 # Loaded models
 openshell gateway stop                                    # Stop gateway (keep sandboxes)
 sudo systemctl stop ollama                                # Free GPU memory
 openshell gateway destroy                                 # Nuclear option
-
-# --- PI SERVICES ---
-ssh pi@100.85.6.21 "systemctl status litellm"
-curl http://100.85.6.21:4000/health
-curl http://100.85.6.21:4000/v1/models
 
 # --- DISK / HEALTH ---
 df -h /
@@ -2703,9 +2390,9 @@ openclaw nodes status                    # List paired nodes with connection sta
 
 | Provider Name | Target | Model(s) | When to Use |
 |---------------|--------|----------|-------------|
-| `local-ollama` | Spark `:11434` | `nemotron-3-super:120b`, `qwen3-coder-next:q4_K_M` | Default — fully local, maximum quality |
+| `local-ollama` | Spark `:11434` | `nemotron-3-super:120b` | Default — fully local, maximum quality |
 | `local-lmstudio` | Spark `:1234` | Any LM Studio model | Alternative / Anthropic-compatible fallback |
-| `mac-ollama` | Mac `:11435` | `qwen3:8b` | Fast responses, low latency tasks |
+| `mac-ollama` | Mac `:11435` | `gemma4:27b` | Fast responses, low latency tasks |
 | `nvidia-nim` | NVIDIA Cloud | `nvidia/nemotron-3-super-120b-a12b` | Cloud comparison (opt-in, data leaves network) |
 
 ### Gotcha Summary

@@ -54,6 +54,11 @@ class HostSettings(BaseSettings):
     # ------------------------------------------------------------------
 
     @property
+    def host(self) -> str:
+        """Return the hostname (alias used by fixtures and Fabric connections)."""
+        return self.hostname
+
+    @property
     def ssh_host(self) -> str:
         """Return user@hostname string suitable for fabric / subprocess."""
         return f"{self.user}@{self.hostname}"

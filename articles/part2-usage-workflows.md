@@ -2,7 +2,7 @@
 
 **From code review pipelines to research-driven development — real workflows using local Nemotron 120B, Claude Code, Codex, and Gemini CLI**
 
-*This is Part 2 of the NemoClaw series. [Part 1](./part1-deployment.md) covers deploying the system from scratch across three machines.*
+*This is Part 2 of the NemoClaw series. [Part 1](./part1-deployment.md) covers deploying the system from scratch across two machines.*
 
 ---
 
@@ -12,21 +12,19 @@
 - Codex and OpenClaw route all inference through local Nemotron 120B on the DGX Spark — your code never leaves the hardware.
 - Claude Code and Gemini CLI use their respective cloud APIs, but remain contained in network-isolated sandboxes with explicit policy allowlists.
 - The `Orchestrator` class coordinates sequential and parallel agent workflows with a simple Python API: `orc.research_and_implement("...")`.
-- LiteLLM on the Raspberry Pi provides a single OpenAI-compatible endpoint that routes to any model by name, making the system accessible from Jupyter, VS Code, and custom scripts without changing client code.
+- The system is accessible from Jupyter, VS Code, and custom scripts via the Ollama API on each machine.
 
 ---
 
 ## Recap: What Was Deployed in Part 1
 
-Part 1 built the following across three physical machines:
+Part 1 built the following across two physical machines:
 
 **DGX Spark** (GB10 Blackwell, 128 GB UMA) — runs four isolated OpenShell sandboxes housing OpenClaw, Claude Code, Codex, and Gemini CLI. Ollama serves Nemotron 120B and Qwen Coder at `localhost:11434`. LM Studio provides an alternate inference server at `:1234`. The OpenShell gateway intercepts all sandbox network traffic, enforces YAML-defined policies, and routes inference through `inference.local` — a virtual TLS endpoint that resolves only inside sandboxes.
 
-**Mac Studio M4 Max** (36 GB unified memory) — runs Qwen3 8B via Ollama, managed by Cursor IDE. A small Python TCP forwarder exposes it on `0.0.0.0:11435` so the Spark can reach it without disrupting Cursor's `localhost:11434` binding.
+**Mac Studio M4 Max** (36 GB unified memory) — runs Gemma4 27B via Ollama, managed by Cursor IDE. A small Python TCP forwarder exposes it on `0.0.0.0:11435` so the Spark can reach it without disrupting Cursor's `localhost:11434` binding.
 
-**Raspberry Pi** — the infrastructure layer. LiteLLM runs as a systemd service and exposes a unified OpenAI-compatible API at `:4000` that routes to any model on any machine by name. Pi-hole handles local DNS so you can use `spark.lab`, `mac.lab`, and `ai.lab` instead of Tailscale IPs. Uptime Kuma monitors all five service endpoints. A Tailscale subnet router makes the full `192.168.1.0/24` LAN visible to all Tailscale devices.
-
-All three machines are connected through a Tailscale mesh VPN, and the OpenClaw UI is accessible over HTTPS at `https://spark-caeb.tail48bab7.ts.net/`.
+Both machines are connected through a Tailscale mesh VPN, and the OpenClaw UI is accessible over HTTPS at `https://spark-caeb.tail48bab7.ts.net/`.
 
 ---
 
@@ -43,7 +41,7 @@ YOUR NETWORK (stays private)             CLOUD (data leaves)
     Ollama: Qwen Coder    <---+                     |
                               |                     |
   [Mac Studio]                |                     |
-    Ollama: Qwen3 8B    <-----+                     |
+    Ollama: Gemma4 27B  <-----+                     |
                               |                     |
   Sandboxes:                  |                     |
     OpenClaw  ----------------+ local inference     |
@@ -219,7 +217,7 @@ The implementation looks solid. A few notes:
 
 ## Scenario 3: Model Comparison (Parallel Specialists)
 
-**The scenario:** You want to understand the quality versus speed tradeoff between Nemotron 120B (the heavy model on the Spark) and Qwen3 8B (the fast model on the Mac). You send the same prompt to both simultaneously and compare.
+**The scenario:** You want to understand the quality versus speed tradeoff between Nemotron 120B (the heavy model on the Spark) and Gemma4 27B (the fast model on the Mac). You send the same prompt to both simultaneously and compare.
 
 The orchestrator's `parallel_specialists()` method uses a `ThreadPoolExecutor` to dispatch prompts concurrently:
 
@@ -252,11 +250,11 @@ for agent, response in responses.items():
 EOF
 ```
 
-To compare local Nemotron 120B against local Qwen3 8B, switch the active provider before the second request:
+To compare local Nemotron 120B against local Gemma4 27B, switch the active provider before the second request:
 
 ```bash
 # Switch to Mac's fast model
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Run the same prompt
 python3 - << 'EOF'
@@ -280,7 +278,7 @@ Switching takes roughly five seconds. No sandbox restart is needed.
 | Task | Model | Reason |
 |------|-------|--------|
 | Complex reasoning, architecture questions | Nemotron 120B | Depth of analysis |
-| Quick one-liners, syntax questions | Qwen3 8B (Mac) | Sub-second latency |
+| Quick one-liners, syntax questions | Gemma4 27B (Mac) | Fast responses, good quality |
 | Code generation from detailed specs | Qwen Coder (Spark) | Code-tuned, local |
 | Web research, long-context summarization | Gemini CLI | Large context window, web access |
 | Code review with deep feedback | Claude Code | Strong on reasoning and style |
@@ -364,85 +362,7 @@ This pattern works well as a pre-commit quality gate. You can wire it into a git
 
 ---
 
-## Scenario 5: LiteLLM as Universal API (Any Client)
-
-**The scenario:** You want to call any NemoClaw model from a Jupyter notebook, a VS Code extension, or a custom script — using the standard OpenAI Python client — without touching sandbox configuration.
-
-The Raspberry Pi runs LiteLLM as a proxy that routes by model name. One endpoint, any model.
-
-**From Python:**
-
-```python
-from openai import OpenAI
-
-# Point at the Pi's LiteLLM proxy — same interface as the OpenAI API
-client = OpenAI(
-    base_url="http://100.85.6.21:4000/v1",
-    api_key="unused",  # LiteLLM doesn't require a key unless you configure one
-)
-
-# This routes to Nemotron 120B on the Spark
-response = client.chat.completions.create(
-    model="nemotron-3-super:120b",
-    messages=[{"role": "user", "content": "What is CUDA unified memory?"}],
-)
-print(response.choices[0].message.content)
-
-# Switch to the Mac's fast model by changing only the model name
-response = client.chat.completions.create(
-    model="qwen3:8b",
-    messages=[{"role": "user", "content": "Quick: what does enumerate() do?"}],
-)
-print(response.choices[0].message.content)
-```
-
-**From curl:**
-
-```bash
-# Check what models are available
-curl http://100.85.6.21:4000/v1/models
-
-# Chat with Nemotron 120B
-curl http://100.85.6.21:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "nemotron-3-super:120b",
-    "messages": [{"role": "user", "content": "Explain gradient checkpointing"}]
-  }'
-
-# Route to the Mac model (sub-second latency)
-curl http://100.85.6.21:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "qwen3:8b", "messages": [{"role": "user", "content": "ping"}]}'
-```
-
-**LiteLLM's routing config** on the Pi maps model names to backends:
-
-```yaml
-model_list:
-  - model_name: "nemotron-3-super:120b"
-    litellm_params:
-      model: "ollama/nemotron-3-super:120b"
-      api_base: "http://100.93.220.104:11434"
-
-  - model_name: "qwen3-coder-next:q4_K_M"
-    litellm_params:
-      model: "ollama/qwen3-coder-next:q4_K_M"
-      api_base: "http://100.93.220.104:11434"
-
-  - model_name: "qwen3:8b"
-    litellm_params:
-      model: "ollama/qwen3:8b"
-      api_base: "http://100.116.228.36:11435"
-```
-
-Adding a new model — say, a fine-tuned variant you pulled from Hugging Face — requires adding one entry to this YAML and running `sudo systemctl reload litellm`. No client changes needed.
-
-**The VS Code use case:** Any extension that accepts an OpenAI-compatible base URL can be pointed at `http://100.85.6.21:4000/v1`. Continue AI, Codeium, and most self-hosted AI extensions support this. Your inference traffic stays on your LAN; the extension vendor never sees your prompts.
-
----
-
-## Scenario 6: Mobile Agent Access
+## Scenario 5: Mobile Agent Access
 
 **The scenario:** You are away from your desk and want a quick answer from Nemotron 120B — not a small cloud model, your own hardware.
 
@@ -464,7 +384,7 @@ For a native experience, the OpenClaw iOS app (TestFlight) supports auto-discove
 
 ## Advanced: The Orchestrator Pattern
 
-The six scenarios above use the orchestrator as a convenience layer. This section explains how it works and when to extend it.
+The five scenarios above use the orchestrator as a convenience layer. This section explains how it works and when to extend it.
 
 ### Manager Pattern vs Handoff Pattern
 
@@ -546,16 +466,13 @@ Understanding the latency profile helps set expectations and choose the right mo
 - Warm inference: first token in 3-8 seconds, then ~15-25 tokens/second on the GB10 Blackwell.
 - The `OLLAMA_KEEP_ALIVE=-1` setting keeps the model resident in GPU memory indefinitely, eliminating cold starts during a working session.
 
-**Qwen3 8B on Mac Studio M4 Max:**
+**Gemma4 27B on Mac Studio M4 Max:**
 - Always warm (Cursor IDE keeps it loaded).
 - First token in under one second. Suitable for autocomplete-speed interactions.
 - Reached via the TCP forwarder on `:11435`. Forwarder overhead is negligible.
 
 **Codex + Nemotron 120B for code generation:**
 - Expect 45-90 seconds for a non-trivial code generation task. This includes Codex's own agent loop (it may make multiple model calls before returning a final result).
-
-**LiteLLM routing overhead:**
-- Measured at under 5ms. The proxy adds no meaningful latency. The bottleneck is always the model.
 
 **Tailscale latency (LAN):**
 - Under 10ms between machines on the same physical network. Tailscale's WireGuard tunnels add roughly 1-2ms of crypto overhead on LAN.
@@ -576,7 +493,7 @@ After running NemoClaw across a working session, the practical benefits become c
 
 **Cost.** After the hardware investment, inference is free. Nemotron 120B at tens of thousands of tokens per day would be expensive on a cloud API. On hardware you own, it costs electricity.
 
-**Flexibility.** Adding a new model is `ollama pull <model>` and one line in the LiteLLM config. Adding a new agent is one `openshell sandbox create` command. Switching between models takes five seconds without restarting anything.
+**Flexibility.** Adding a new model is `ollama pull <model>` and registering it as a provider. Adding a new agent is one `openshell sandbox create` command. Switching between models takes five seconds without restarting anything.
 
 **Transparency note:** This article was written with AI assistance, primarily Claude and Gemini, running inside the NemoClaw system described above. The code samples come directly from the production deployment. The orchestrator output examples are representative of actual timing from the DGX Spark hardware.
 
@@ -586,4 +503,4 @@ The [NemoClaw repository](https://github.com/macayaven/nemoclaw) contains the or
 
 *Carlos Macaya — March 2026*
 
-*Part 1: [Deploying NemoClaw: 3 Machines, 4 Sandboxes, 1 Local 120B Model](./part1-deployment.md)*
+*Part 1: [Deploying NemoClaw: 2 Machines, 4 Sandboxes, 1 Local 120B Model](./part1-deployment.md)*

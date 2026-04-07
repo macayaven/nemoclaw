@@ -4,16 +4,6 @@ How to start, stop, pause, restart, and manage your NemoClaw deployment day-to-d
 
 ---
 
-## Current State
-
-**Your deployment status: NOT YET DEPLOYED.**
-
-What exists so far is the validation framework (166 tests across pre-flight plus six phases), documentation, and CI/CD. To deploy, follow the [Deployment Guide](deployment-guide.md) phase by phase.
-
-Once deployed, this guide covers ongoing operations.
-
----
-
 ## 1. Starting NemoClaw
 
 ### Start everything (full stack)
@@ -27,13 +17,11 @@ sudo systemctl start ollama
 # Verify: ss -tlnp | grep 11434
 
 # 2. Spark — Start OpenShell gateway
-cd ~/workspace/nemoclaw
-source openshell-env/bin/activate
 openshell gateway start
 # Wait ~2 minutes for k3s bootstrap
 # Verify: openshell status → "Connected"
 
-# 3. Spark — Sandbox auto-starts if created with --keep
+# 3. Spark — Sandboxes auto-start if created with --keep
 # If not, recreate:
 openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from openclaw -- openclaw-start
 
@@ -41,11 +29,6 @@ openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from open
 ssh mac-studio.local
 OLLAMA_HOST=0.0.0.0 ollama serve &
 # Or if launchd is configured, it starts automatically on boot
-
-# 5. Pi — LiteLLM, Pi-hole, Uptime Kuma (all systemd, auto-start on boot)
-# Verify:
-ssh raspi.local
-sudo systemctl status litellm pihole-FTL
 ```
 
 ### Start just the core (Spark only)
@@ -88,9 +71,6 @@ sudo systemctl stop ollama
 launchctl bootout gui/$(id -u)/com.ollama.serve
 # If running manually:
 pkill ollama
-
-# 4. Pi — Stop services (usually not needed, they're lightweight)
-sudo systemctl stop litellm
 ```
 
 ### Stop a single sandbox (keep everything else running)
@@ -135,14 +115,6 @@ openshell inference set --provider local-ollama --model nemotron-3-super:120b
 ssh mac-studio.local "pkill ollama"
 ```
 
-### Pause LiteLLM on Pi (direct access only)
-
-```bash
-ssh raspi.local "sudo systemctl stop litellm"
-# Now http://ai.lab:4000 is unavailable, but direct access to
-# spark:11434 and spark:18789 still works
-```
-
 ---
 
 ## 4. Restarting
@@ -177,7 +149,7 @@ openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from open
 # Destroy everything and start fresh
 openshell gateway destroy  # WARNING: deletes all sandboxes and providers
 openshell gateway start
-# Then re-run Phase 1 steps 3-6 from the deployment guide
+# Then re-run Phase 1 steps from docs/deployment-guide.md
 ```
 
 ---
@@ -189,6 +161,13 @@ openshell gateway start
 ```bash
 # Shows all sandbox activity, policy decisions, network requests, approvals
 openshell term
+```
+
+### System status script
+
+```bash
+# Full status in one command
+./scripts/status.sh
 ```
 
 ### View logs for a specific sandbox
@@ -211,17 +190,13 @@ openshell provider list                 # All registered providers
 ollama ps                               # Currently loaded models
 ollama list                             # All downloaded models
 nvidia-smi                              # GPU usage (Spark only)
-
-# Pi monitoring
-curl http://raspi.local:4000/health     # LiteLLM proxy
-curl http://raspi.local:3001            # Uptime Kuma dashboard
 ```
 
 ### Run the test suite to validate state
 
 ```bash
 cd ~/workspace/nemoclaw/tests
-uv run pytest phase1_core/ -v           # Validate Spark is healthy
+uv run pytest tests/phase1_core/ -v     # Validate Spark is healthy
 uv run pytest -v                        # Validate everything
 ```
 
@@ -237,6 +212,19 @@ ollama pull nemotron-3-super:120b
 
 # The old version is replaced. Next inference request uses the new one.
 # No need to restart the gateway or sandbox.
+```
+
+### Switch models
+
+```bash
+# Heavy model (Nemotron 120B on Spark) — default
+openshell inference set --provider local-ollama --model nemotron-3-super:120b
+
+# Fast model (Gemma 4 27B on Mac Studio)
+openshell inference set --provider mac-ollama --model gemma4:27b
+
+# NVIDIA Cloud (Nemotron via API Catalog)
+openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 ### Update OpenShell

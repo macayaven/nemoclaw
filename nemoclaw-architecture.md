@@ -1,6 +1,6 @@
 # NemoClaw: Architecture & Conceptual Guide
 
-*Adapted for: DGX Spark + Mac Studio M4 Max + Raspberry Pi*
+*Adapted for: DGX Spark + Mac Studio M4 Max*
 *March 2026 • carlos@mac-studio.local*
 
 ---
@@ -12,7 +12,7 @@ You want to run always-on AI agents — coding assistants, personal assistants, 
 - **Security**: An unconstrained agent can read any file, make any network request, access credentials, and exfiltrate data. OpenClaw, Claude Code, Codex — they all run with the permissions of whatever user starts them.
 - **Privacy**: If the agent sends your code or data to a cloud model, you've lost control of it. You need inference to stay local by default.
 - **Control**: You need to decide what the agent can access, what models it uses, and what network destinations it can reach — and change these decisions without restarting everything.
-- **Multi-machine complexity**: You have a DGX Spark (128GB, Blackwell GPU) and a Mac Studio (36GB, M4 Max). You want to leverage both, not just one.
+- **Multi-machine complexity**: You have a DGX Spark (128GB, Blackwell GPU) and a Mac Studio (128GB, M4 Max). You want to leverage both, not just one.
 
 NemoClaw exists to solve all four problems at once.
 
@@ -117,7 +117,7 @@ Two tiers of models:
 
 | Tier | Default? | Examples | Data handling |
 |------|----------|---------|---------------|
-| **Local Open Models** | YES (default) | Nemotron 3 Super 120B, Nemotron Nano 30B, Qwen, Llama | Data stays on your hardware |
+| **Local Open Models** | YES (default) | Nemotron 3 Super 120B, Nemotron Nano 30B, Gemma 4 27B | Data stays on your hardware |
 | **Frontier Models** | No (opt-in) | Claude, GPT-4.1, Nemotron via NVIDIA Cloud | Data sent to cloud provider |
 
 ---
@@ -250,13 +250,13 @@ Running Ollama and LM Studio together gives you:
 
 ```
 DGX Spark:
-  :11434  ──  Ollama API (nemotron-3-super:120b, qwen3-coder-next)
+  :11434  ──  Ollama API (nemotron-3-super:120b)
   :1234   ──  LM Studio API (alternative models, Anthropic-compatible)
   :18789  ──  OpenClaw UI
   :8080   ──  OpenShell gateway
 
 Mac Studio:
-  :11434  ──  Ollama API (qwen3:8b)
+  :11434  ──  Ollama API (gemma4:27b)
   :1234   ──  LM Studio API (alternative fast models)
 ```
 
@@ -504,14 +504,13 @@ The orchestrator preserves all sandbox security boundaries:
 
 | Spec | Value | Implication |
 |------|-------|-------------|
-| GPU | Apple M4 Max | Metal acceleration for Ollama, excellent for ≤20B models |
-| RAM | 36 GB unified | Can run qwen3:8b (~5.5GB) or nemotron-nano (~18GB) |
-| OS | macOS 15.4 (ARM64) | OpenShell supported via Docker Desktop or Colima |
-| Role | **Dev workstation + secondary inference + companion app host** | Runs OpenClaw.app, IDE, fast models via Ollama |
+| GPU | Apple M4 Max | Metal acceleration for Ollama, handles large models well |
+| RAM | 128 GB unified | Can run Gemma 4 27B comfortably with headroom for concurrent models |
+| OS | macOS (ARM64) | OpenShell supported via Docker Desktop or Colima |
+| Role | **Dev workstation + secondary inference + companion app host** | Runs OpenClaw.app, IDE, Gemma 4 via Ollama |
 
 **Constraints:**
 - macOS kernel doesn't support Landlock/seccomp natively — security runs inside Docker Desktop's Linux VM
-- 36GB limits model size — Nemotron Super 120B won't fit
 - Docker Desktop or Colima required for OpenShell
 - Ollama must be started separately (not managed by OpenShell)
 
@@ -520,27 +519,7 @@ The orchestrator preserves all sandbox security boundaries:
 - Can run OpenShell gateway in remote mode pointing to Spark
 - LM Studio available as alternative inference server
 - Primary user interaction point (browser, IDE, terminal)
-
-### Raspberry Pi (raspi.local)
-
-| Spec | Value | Implication |
-|------|-------|-------------|
-| CPU | ARM64 | Can run lightweight services |
-| RAM | 3.7 GB | No models, no heavy workloads |
-| OS | Debian Bookworm | Stable, low-maintenance |
-| Role | **Infrastructure control plane** | LiteLLM proxy, DNS, monitoring, Tailscale router |
-
-**Constraints:**
-- Cannot run ANY inference
-- Cannot run OpenShell sandboxes (insufficient RAM)
-- Cannot run Docker effectively (too resource-constrained)
-
-**Value proposition:**
-- **LiteLLM Proxy** (~300MB): Unified API gateway routing to Spark + Mac Ollama
-- **Pi-hole/CoreDNS** (~60MB): DNS resolution for `spark.lab`, `mac.lab`, `ai.lab`
-- **Uptime Kuma** (~120MB): Monitors all endpoints
-- **Tailscale subnet router** (~40MB): Remote access without per-device Tailscale installs
-- **Always-on at 5W**: Infrastructure services that should never sleep
+- 128 GB unified memory supports running large models locally
 
 ---
 
@@ -580,10 +559,9 @@ The orchestrator preserves all sandbox security boundaries:
 │  │  │  │  Ollama :11434         │  │  NVIDIA API Catalog      │ │  │ │
 │  │  │  │  ├ nemotron-3-super    │  │  (build.nvidia.com)      │ │  │ │
 │  │  │  │  │  :120b (86GB)       │  │                          │ │  │ │
-│  │  │  │  ├ qwen3-coder-next    │  │  Anthropic API           │ │  │ │
-│  │  │  │  │  :q4_K_M (51GB)     │  │  (opt-in, via policy)   │ │  │ │
-│  │  │  │  └ nemotron-nano       │  │                          │ │  │ │
-│  │  │  │    :30b (18GB)         │  │  OpenAI API              │ │  │ │
+│  │  │  │  └ nemotron-nano       │  │  Anthropic API           │ │  │ │
+│  │  │  │    :30b (18GB)         │  │  (opt-in, via policy)    │ │  │ │
+│  │  │  │                        │  │  OpenAI API              │ │  │ │
 │  │  │  │                        │  │  (opt-in, via policy)    │ │  │ │
 │  │  │  └────────────────────────┘  └──────────────────────────┘ │  │ │
 │  │  └────────────────────────────────────────────────────────────┘  │ │
@@ -597,30 +575,13 @@ The orchestrator preserves all sandbox security boundaries:
 │  │                       │                                          │ │
 │  │  ┌─────────────┐     │     ┌──────────────────┐                 │ │
 │  │  │ OpenClaw.app │     │     │ Ollama :11434     │                 │ │
-│  │  │ (companion)  │     │     │ ├ qwen3:8b        │                 │ │
-│  │  │ Menu bar     │─── WS ──▶│ ├ nemotron-nano   │                 │ │
-│  │  │ Voice wake   │  :18789   │ └ embeddings      │                 │ │
+│  │  │ (companion)  │     │     │ ├ gemma4:27b       │                 │ │
+│  │  │ Menu bar     │─── WS ──▶│ └ nemotron-nano   │                 │ │
+│  │  │ Voice wake   │  :18789   │                    │                 │ │
 │  │  │ Screen/Camera│           └──────────────────┘                 │ │
 │  │  └─────────────┘                                                 │ │
 │  │                                                                  │ │
 │  │  IDE • Claude Code • Codex • Browser (NemoClaw UI)              │ │
-│  └──────────────────────────────────────────────────────────────────┘ │
-│                                                                      │
-│  ┌──────────────────────────────────────────────────────────────────┐ │
-│  │  Raspberry Pi (raspi.local)                                      │ │
-│  │  ══════════════════════════                                      │ │
-│  │                                                                  │ │
-│  │  ┌──────────────┐  ┌─────────────┐  ┌────────────────────┐      │ │
-│  │  │ LiteLLM :4000│  │ Pi-hole DNS │  │ Uptime Kuma        │      │ │
-│  │  │ Unified API  │  │ spark.lab   │  │ Monitors all       │      │ │
-│  │  │ gateway      │  │ mac.lab     │  │ endpoints          │      │ │
-│  │  │ Routes to:   │  │ ai.lab      │  └────────────────────┘      │ │
-│  │  │ ├ Spark:11434│  └─────────────┘                               │ │
-│  │  │ └ Mac:11434  │  ┌─────────────┐  ┌────────────────────┐      │ │
-│  │  └──────────────┘  │ Tailscale   │  │ Homepage           │      │ │
-│  │                     │ subnet      │  │ Lab dashboard      │      │ │
-│  │                     │ router      │  └────────────────────┘      │ │
-│  │                     └─────────────┘                               │ │
 │  └──────────────────────────────────────────────────────────────────┘ │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────────┐ │
@@ -668,20 +629,14 @@ The orchestrator preserves all sandbox security boundaries:
 - This is the ONLY machine that needs the full NemoClaw stack
 - `nemoclaw setup-spark` optimizes Docker/cgroup configuration specifically for DGX
 
-**Mac Studio — The Interface**
+**Mac Studio — The Interface + Secondary Inference**
 - Your primary interaction point (browser, IDE, terminal)
 - Runs OpenClaw.app (macOS companion — voice wake, screen, camera, AppleScript)
-- Runs Ollama with fast models (qwen3:8b) for lightweight/secondary inference
+- Runs Ollama with Gemma 4 27B for fast secondary inference
+- 128 GB unified memory supports large model workloads
 - Connects to Spark's gateway via SSH or Tailscale
 - Can manage the Spark's OpenShell remotely: `openshell gateway start --remote carlos@spark-caeb.local`
 - Runs coding agents (Claude Code, Codex) that point to Spark for heavy inference
-
-**Raspberry Pi — The Infrastructure**
-- LiteLLM proxy: Provides a UNIFIED API endpoint at `ai.lab:4000` that routes to both Spark and Mac Ollama by model name
-- DNS: Resolves `spark.lab`, `mac.lab`, `ai.lab` so you never type IP addresses
-- Monitoring: Uptime Kuma watches all services, alerts on failures
-- Tailscale subnet router: Remote access to the entire lab from one node
-- Always on at 5W — infrastructure that never sleeps
 
 ---
 
@@ -726,9 +681,8 @@ The orchestrator preserves all sandbox security boundaries:
 - **Alpha software**: Single-player mode. One developer, one environment, one gateway.
 
 ### Hardware Constraints
-- **DGX Spark disk 69% full**: ~800GB free. Monitor before pulling models.
-- **Mac Studio 36GB**: Can't run Nemotron 120B. Limited to models ≤20-25B.
-- **Pi 3.7GB RAM**: Infrastructure services only. No inference, no sandboxes.
+- **DGX Spark disk**: Monitor before pulling models (`df -h`).
+- **Mac Studio 128GB**: Can run models up to ~80B comfortably. Gemma 4 27B is the default fast model.
 - **Network**: Local network speed affects Mac↔Spark inference latency.
 
 ### Software Constraints

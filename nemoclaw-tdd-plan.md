@@ -191,7 +191,7 @@ class TestSparkOllama:
 
     @pytest.mark.parametrize("model", [
         "nemotron-3-super:120b",
-        "qwen3-coder-next:q4_K_M",
+        "nemotron-3-super:120b",
     ])
     def test_model_downloaded(self, spark: SparkPrereqs, model: str):
         assert model in spark.models_available
@@ -432,7 +432,7 @@ class TestOpenClawSandbox:
 - Mac Studio is reachable from Spark via network
 
 ### Success Criteria
-Mac Ollama is running with `qwen3:8b`, registered as a provider on the Spark, provider switching works, and the OpenClaw UI is accessible from the Mac browser.
+Mac Ollama is running with `gemma4:27b`, registered as a provider on the Spark, provider switching works, and the OpenClaw UI is accessible from the Mac browser.
 
 ### Definition of Done
 `pytest tests/phase2_mac/ -v` — all tests pass.
@@ -441,7 +441,7 @@ Mac Ollama is running with `qwen3:8b`, registered as a provider on the Spark, pr
 | UC | Description |
 |----|-------------|
 | UC-2.1 | Mac Ollama listens on 0.0.0.0:11434 |
-| UC-2.2 | `qwen3:8b` model is downloaded and loadable on Mac |
+| UC-2.2 | `gemma4:27b` model is downloaded and loadable on Mac |
 | UC-2.3 | Provider `mac-ollama` registered on Spark pointing to Mac's IP |
 | UC-2.4 | Switching to `mac-ollama` provider works without error |
 | UC-2.5 | Inference through Mac provider returns a completion |
@@ -467,24 +467,24 @@ class TestMacOllamaBinding:
         resp = httpx.get(f"http://{mac_ip}:11434/api/tags", timeout=10)
         assert resp.status_code == 200
 
-    def test_qwen3_8b_available(self, mac_ip: str):
+    def test_gemma4_8b_available(self, mac_ip: str):
         resp = httpx.get(f"http://{mac_ip}:11434/api/tags", timeout=10)
         models = [m["name"] for m in resp.json()["models"]]
-        assert any("qwen3" in m for m in models)
+        assert any("gemma4" in m for m in models)
 
 # tests/phase2_mac/test_provider_switching.py
 
 class TestProviderSwitching:
     def test_switch_to_mac(self, spark_ssh):
         result = spark_ssh.run(
-            "openshell inference set --provider mac-ollama --model qwen3:8b"
+            "openshell inference set --provider mac-ollama --model gemma4:27b"
         )
         assert result.return_code == 0
 
     def test_mac_inference_works(self, spark_ssh):
         result = spark_ssh.run("openshell inference get")
         assert "mac-ollama" in result.stdout
-        assert "qwen3" in result.stdout
+        assert "gemma4" in result.stdout
 
     def test_switch_back_to_spark(self, spark_ssh):
         result = spark_ssh.run(
@@ -522,7 +522,7 @@ LiteLLM proxy routes requests to both Spark and Mac by model name, DNS resolves 
 |----|-------------|
 | UC-3.1 | LiteLLM proxy is running on Pi port 4000 |
 | UC-3.2 | LiteLLM routes `nemotron-3-super:120b` → Spark Ollama |
-| UC-3.3 | LiteLLM routes `qwen3:8b` → Mac Ollama |
+| UC-3.3 | LiteLLM routes `gemma4:27b` → Mac Ollama |
 | UC-3.4 | LiteLLM `/v1/models` returns models from both backends |
 | UC-3.5 | DNS resolves `spark.lab` → Spark IP |
 | UC-3.6 | DNS resolves `mac.lab` → Mac IP |
@@ -554,7 +554,7 @@ class TestLiteLLMHealth:
         models = resp.json()
         model_ids = [m["id"] for m in models["data"]]
         assert "nemotron-3-super:120b" in model_ids
-        assert "qwen3:8b" in model_ids
+        assert "gemma4:27b" in model_ids
 
 class TestLiteLLMRouting:
     @pytest.mark.timeout(90)
@@ -575,7 +575,7 @@ class TestLiteLLMRouting:
         resp = httpx.post(
             f"http://{pi_ip}:4000/v1/chat/completions",
             json={
-                "model": "qwen3:8b",
+                "model": "gemma4:27b",
                 "messages": [{"role": "user", "content": "hello"}],
                 "max_tokens": 5,
             },
