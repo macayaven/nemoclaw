@@ -1,6 +1,6 @@
 # Running a 120B Parameter Model Locally with Multi-Machine AI Agents: A Complete NemoClaw Deployment Guide
 
-**How I deployed NVIDIA's NemoClaw across a DGX Spark, Mac Studio, and Raspberry Pi — with 4 isolated coding agents, private inference, and zero cloud dependency**
+**How I deployed NVIDIA's NemoClaw across a DGX Spark and Mac Studio — with 4 isolated coding agents, private inference, and zero cloud dependency**
 
 *Published March 2026 | Part 1 of a series | AI-assisted deployment, human-written article*
 
@@ -11,7 +11,6 @@
 - NemoClaw is NVIDIA's open-source reference stack for running AI agents safely on your own hardware — it wraps agents in isolated sandboxes with a private inference router
 - We deployed a 120B parameter Nemotron model on a DGX Spark (128GB Blackwell GPU) with four fully isolated coding agents: OpenClaw, Claude Code, Codex, and Gemini CLI
 - A Mac Studio (M4 Max, 36GB) acts as a fast secondary inference server for lighter workloads, connected via a TCP forwarder that works around Cursor IDE's port conflict
-- A Raspberry Pi runs the infrastructure layer: unified API gateway (LiteLLM), DNS (Pi-hole), monitoring (Uptime Kuma), and Tailscale subnet routing — all at 5W
 - Total deployment time was approximately two hours including troubleshooting; this guide documents every step, every gotcha, and every fix
 
 ---
@@ -30,11 +29,10 @@ This is also an honest account of a real deployment, not a polished demo. The mi
 
 ## What We're Building
 
-The finished system consists of three machines connected via Tailscale, each with a distinct role:
+The finished system consists of two machines connected via Tailscale, each with a distinct role:
 
 - **DGX Spark** (NVIDIA GB10 Blackwell, 128GB UMA, Ubuntu 24.04 ARM64) — primary inference host for the 120B Nemotron model, control plane for four agent sandboxes, and Tailscale HTTPS endpoint
-- **Mac Studio** (M4 Max, 36GB, macOS 15.4) — secondary inference host running Qwen3 8B for fast responses, primary development workstation, and OpenClaw companion app host
-- **Raspberry Pi** (ARM64, 3.7GB RAM, Debian Bookworm) — infrastructure control plane running LiteLLM proxy, Pi-hole DNS, Uptime Kuma monitoring, and Tailscale subnet routing
+- **Mac Studio** (M4 Max, 36GB, macOS 15.4) — secondary inference host running Gemma4 27B for fast responses, primary development workstation, and OpenClaw companion app host
 
 ```mermaid
 graph TD
@@ -51,17 +49,11 @@ graph TD
         end
 
         subgraph "Mac Studio (100.116.228.36)"
-            OLM["Ollama.app\nQwen3 8B :11434"]
+            OLM["Ollama.app\nGemma4 27B :11434"]
             FWD["TCP Forwarder\n:11435 → :11434"]
             NC["OpenClaw\nNode Host"]
         end
 
-        subgraph "Raspberry Pi (100.85.6.21)"
-            LL["LiteLLM Proxy\n:4000"]
-            PH["Pi-hole DNS"]
-            UK["Uptime Kuma"]
-            TSR["Tailscale Subnet\nRouter"]
-        end
     end
 
     GW -- "inference.local" --> OL
@@ -70,11 +62,9 @@ graph TD
     FWD --> OLM
     NC -- "wss via Tailscale" --> TS
     TS --> SB1
-    LL --> OL
-    LL --> FWD
 ```
 
-*Figure 1: Full three-machine NemoClaw architecture connected via Tailscale mesh VPN.*
+*Figure 1: Two-machine NemoClaw architecture connected via Tailscale mesh VPN.*
 
 ---
 
@@ -126,7 +116,7 @@ graph TD
 
     subgraph "Layer 3: Private Inference Router"
         S --> IR["https://inference.local/v1\nVirtual endpoint"]
-        IR --> L["Local Models\nNemotron 120B, Qwen3 8B\n(DEFAULT)"]
+        IR --> L["Local Models\nNemotron 120B, Gemma4 27B\n(DEFAULT)"]
         IR --> C["Cloud Models\nClaude, GPT, Gemini\n(OPT-IN only)"]
     end
 ```
@@ -149,18 +139,17 @@ Here is what we used. None of this is required — the "minimum viable setup" se
 |---------|---------|-----|----|--------------|------|
 | DGX Spark | NVIDIA GB10 Blackwell | 128GB UMA | Ubuntu 24.04 ARM64 | 100.93.220.104 | Primary inference + control plane |
 | Mac Studio | Apple M4 Max | 36GB | macOS 15.4 | 100.116.228.36 | Secondary inference + dev workstation |
-| Raspberry Pi | ARM64 Cortex-A72 | 3.7GB | Debian Bookworm | 100.85.6.21 | Infrastructure layer |
 
 ### Minimum Viable Setup
 
-You do not need three machines to run NemoClaw. The minimum requirements are:
+You do not need two machines to run NemoClaw. The minimum requirements are:
 
-- **One machine with a GPU and Docker** — any Linux machine with 16GB+ VRAM can run a useful model (e.g., Qwen3 8B at Q4 quantization requires about 8GB VRAM)
-- **Ollama installed and a model downloaded** — `ollama pull qwen3:8b` is a good starting point
+- **One machine with a GPU and Docker** — any Linux machine with 16GB+ VRAM can run a useful model (e.g., Gemma4 27B at Q4 quantization requires about 8GB VRAM)
+- **Ollama installed and a model downloaded** — `ollama pull gemma4:27b` is a good starting point
 - **OpenShell installed** — `pip install openshell` in a virtualenv
 - **NemoClaw CLI installed** — `npm install -g nemoclaw`
 
-The three-machine setup in this guide adds secondary inference, infrastructure monitoring, and subnet routing. All of that is additive. Start with one machine and expand.
+The two-machine setup in this guide adds secondary inference on the Mac Studio. Start with one machine and expand.
 
 ---
 
@@ -300,7 +289,7 @@ A successful response confirms the full chain: sandbox to `inference.local`, to 
 
 ## Phase 2: Adding a Second Machine (Mac Studio)
 
-The Mac Studio provides a fast secondary inference path. Qwen3 8B on M4 Max responds in under a second for most prompts, which makes it useful for quick tasks while the Spark handles heavy multi-step reasoning with Nemotron.
+The Mac Studio provides a fast secondary inference path. Gemma4 27B on M4 Max provides a good balance of quality and speed, which makes it useful for quick tasks while the Spark handles heavy multi-step reasoning with Nemotron.
 
 ### The Cursor Port Conflict
 
@@ -353,7 +342,7 @@ Switching between the 120B and 8B models now takes about five seconds and requir
 
 ```bash
 # Switch to Mac (fast, 8B)
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Switch back to Spark (heavy, 120B)
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
@@ -402,57 +391,7 @@ openshell forward start 18789 nemoclaw-main --background
 
 ---
 
-## Phase 3: Infrastructure Layer on Raspberry Pi
-
-The Pi might seem like an odd addition. It has 3.7GB of RAM and cannot run any meaningful model. Its value is as a low-power, always-on infrastructure host — a control plane that runs independently of the machines doing heavy work.
-
-### LiteLLM Proxy
-
-LiteLLM turns into a unified API gateway for all machines on the network. Any client hitting `http://pi:4000/v1/chat/completions` gets routed to the correct machine based on model name.
-
-```bash
-# On the Pi:
-python3 -m venv ~/litellm-env
-source ~/litellm-env/bin/activate
-pip install "litellm[proxy]"
-```
-
-```yaml
-# ~/litellm/config.yaml
-model_list:
-  - model_name: "nemotron-3-super:120b"
-    litellm_params:
-      model: "ollama/nemotron-3-super:120b"
-      api_base: "http://100.93.220.104:11434"
-  - model_name: "qwen3:8b"
-    litellm_params:
-      model: "ollama/qwen3:8b"
-      api_base: "http://100.116.228.36:11435"
-```
-
-```bash
-sudo systemctl enable litellm && sudo systemctl start litellm
-```
-
-### Pi-hole and DNS
-
-Pi-hole provides local DNS resolution for the lab. We added custom DNS records: `spark.lab`, `mac.lab`, and `ai.lab` — human-readable names that survive IP changes. This removes any hardcoded IPs from configuration files.
-
-### Uptime Kuma
-
-Uptime Kuma monitors all inference endpoints, the OpenShell gateway, and the Tailscale Serve HTTPS endpoint. When anything goes down, it sends an alert. This is how we know about silent port forward drops before the node host starts returning 502s.
-
-### Tailscale Subnet Router
-
-```bash
-sudo tailscale up --advertise-routes=192.168.1.0/24 --accept-routes
-```
-
-With subnet routing enabled on the Pi, any Tailscale device can reach any machine on the local network `192.168.1.0/24` — without needing Tailscale installed on every device. This is how a phone or tablet can reach the Spark without a per-device setup.
-
----
-
-## Phase 4: Four Agent Sandboxes
+## Phase 3: Four Agent Sandboxes
 
 With the infrastructure running, we create four independent agent sandboxes. Each has its own filesystem, its own network policy, and its own inference path.
 
@@ -516,7 +455,7 @@ The sandbox guardrails make this boundary explicit and enforced, not just docume
 
 ---
 
-## Phase 5: Remote Access via Tailscale Serve
+## Phase 4: Remote Access via Tailscale Serve
 
 Tailscale Serve creates an HTTPS endpoint for the OpenClaw gateway, reachable from any Tailscale device with a valid TLS certificate — no self-signed certificates, no port forwarding through a router.
 
@@ -562,15 +501,11 @@ Without it, Ollama evicts the model from VRAM after a few minutes of inactivity.
 
 Every machine on Tailscale gets a stable IP that doesn't change with DHCP renewals, network switches, or reboots. We used Tailscale IPs in every provider configuration. No private DNS, no hardcoded local IPs, no router port forwarding required.
 
-### 8. The Pi Earns Its Place
-
-A Raspberry Pi cannot run inference. What it can do is run LiteLLM, Pi-hole, Uptime Kuma, and a Tailscale subnet router at 5W continuous power draw. These services make the whole system more observable, more resilient, and easier to operate from any device on the network. That is worth the $80 hardware cost.
-
 ---
 
 ## Generic Multi-Device Guide
 
-The three-machine setup is not a requirement. Here is how to adapt this to different hardware configurations.
+The two-machine setup is not a requirement. Here is how to adapt this to different hardware configurations.
 
 ### Single Machine (Minimum)
 
@@ -623,20 +558,6 @@ openshell provider create \
 
 If it binds only to localhost (e.g., macOS Ollama.app with Cursor), use the TCP forwarder pattern on port 11435.
 
-### Adding a Pi for Infrastructure
-
-Requirements: Raspberry Pi (any model), Python 3.9+, Tailscale.
-
-```bash
-# Install LiteLLM
-pip install "litellm[proxy]"
-
-# Configure and run
-litellm --config ~/litellm/config.yaml --port 4000
-```
-
-Add models from all your machines to `config.yaml`. Any client can now reach all models through one endpoint at `http://<pi-ip>:4000`.
-
 ---
 
 ## What's Next (Part 2 Preview)
@@ -648,7 +569,7 @@ Part 2 will cover using it. Specifically:
 - The NemoClaw orchestrator: how four agents cooperate on a task, with one agent acting as a planner and others as specialized executors
 - Practical workflows: code review across three simultaneous agents, research tasks that combine local and cloud inference, automated testing pipelines
 - MCP servers: writing shared tools that all agents can use across sandbox boundaries
-- Monitoring in practice: reading the Uptime Kuma dashboard, interpreting OpenShell's TUI, debugging a failing inference route
+- Monitoring in practice: interpreting OpenShell's TUI, debugging a failing inference route
 - What the privacy boundary actually means in practice — and when to cross it
 
 The system we built in Part 1 is deliberate. Four agents, each with a distinct inference path and capability set, none of which can interfere with the others. Part 2 shows why that isolation matters when agents are working together.
@@ -662,10 +583,7 @@ The system we built in Part 1 is deliberate. Four agents, each with a distinct i
 - [OpenClaw](https://openclaw.ai) — AI agent with browser and TUI interfaces
 - [Ollama](https://ollama.com) — local LLM engine with OpenAI-compatible API
 - [LM Studio](https://lmstudio.ai) — local inference server with Anthropic-compatible API
-- [LiteLLM](https://github.com/BerriAI/litellm) — unified LLM proxy and API gateway
 - [Tailscale](https://tailscale.com) — mesh VPN for multi-machine connectivity
-- [Pi-hole](https://pi-hole.net) — network-level DNS and ad blocking
-- [Uptime Kuma](https://github.com/louislam/uptime-kuma) — self-hosted uptime monitoring
 
 This deployment was AI-assisted: Claude Sonnet and Codex running inside the NemoClaw sandboxes helped debug configuration issues and draft documentation as we went. The irony of using the system to document building the system was not lost on us.
 
@@ -673,4 +591,4 @@ This deployment was AI-assisted: Claude Sonnet and Codex running inside the Nemo
 
 *Part 1 of the NemoClaw deployment series. Part 2: Using the system — orchestration, agent cooperation, and practical workflows.*
 
-*Written March 2026. Hardware: DGX Spark (GB10 Blackwell, 128GB), Mac Studio (M4 Max, 36GB), Raspberry Pi 4.*
+*Written March 2026. Hardware: DGX Spark (GB10 Blackwell, 128GB), Mac Studio (M4 Max, 36GB).*

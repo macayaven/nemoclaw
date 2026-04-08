@@ -1,6 +1,6 @@
 # NemoClaw Cookbook
 
-*30 copy-pasteable recipes for daily operations on the DGX Spark + Mac Studio + Raspberry Pi stack.*
+*30 copy-pasteable recipes for daily operations on the DGX Spark + Mac Studio stack.*
 
 *All commands that run inside the `nemoclaw-main` sandbox are preceded by `openshell sandbox connect nemoclaw-main`.*
 *All commands that require the OpenShell venv assume `source ~/workspace/nemoclaw/openshell-env/bin/activate` has been run on the Spark.*
@@ -61,15 +61,15 @@ openshell inference get
 
 ### Recipe 2 — Switch the Active Model
 
-**Why:** You want to switch from Nemotron 120B (heavy, slow first token) to Qwen3 8B on the Mac (fast, lightweight) or back. This takes about 5 seconds and does not restart any sandbox.
+**Why:** You want to switch from Nemotron 120B (heavy, slow first token) to Gemma 4 27B on the Mac (fast, lightweight) or back. This takes about 5 seconds and does not restart any sandbox.
 
 **CLI command (run on Spark host):**
 
 ```bash
 source ~/workspace/nemoclaw/openshell-env/bin/activate
 
-# Switch to Mac (fast, 8B — good for quick Q&A)
-openshell inference set --provider mac-ollama --model qwen3:8b
+# Switch to Mac (fast, 27B — good for quick Q&A)
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Switch back to Spark (120B — good for complex reasoning)
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
@@ -104,12 +104,9 @@ curl -s http://100.93.220.104:11434/v1/chat/completions \
 # Pull on Spark (large models — Nemotron-class)
 ollama pull nemotron-3-super:120b
 
-# Pull on Spark (coder model)
-ollama pull qwen3-coder-next:q4_K_M
-
-# Pull on Mac (fast/small models — SSH in first)
+# Pull on Mac (fast models — SSH in first)
 ssh carlos@100.116.228.36
-/usr/local/bin/ollama pull qwen3:8b
+/usr/local/bin/ollama pull gemma4:27b
 
 # Verify available disk space before pulling a large model
 df -h /
@@ -134,8 +131,8 @@ ollama list
 # On Mac
 ssh carlos@100.116.228.36 "/usr/local/bin/ollama list"
 
-# Test the new model responds via the unified LiteLLM endpoint:
-curl http://100.85.6.21:4000/v1/chat/completions \
+# Test the new model responds:
+curl http://100.93.220.104:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{"model":"<new-model-name>","messages":[{"role":"user","content":"hello"}]}'
 ```
@@ -223,7 +220,7 @@ openshell sandbox connect nemoclaw-main
 # Create a new custom skill definition
 openclaw skills create my-internal-api \
     --description "Query the internal project tracking API" \
-    --command "curl -s http://100.85.6.21:8080/projects" \
+    --command "curl -s http://100.93.220.104:8080/projects" \
     --output-format json
 
 # List to confirm it was created
@@ -240,12 +237,12 @@ For a skill backed by a script, place the script in the sandbox workspace first:
 mkdir -p /sandbox/scripts
 cat > /sandbox/scripts/fetch-status.sh << 'EOF'
 #!/bin/bash
-curl -s http://100.85.6.21:4000/health | python3 -m json.tool
+curl -s http://100.93.220.104:11434/api/tags | python3 -m json.tool
 EOF
 chmod +x /sandbox/scripts/fetch-status.sh
 
 openclaw skills create infra-health \
-    --description "Check health of all Pi-hosted services" \
+    --description "Check health of all local services" \
     --command "/sandbox/scripts/fetch-status.sh" \
     --output-format text
 ```
@@ -674,7 +671,7 @@ openclaw cron run <job-id>
 
 ### Recipe 17 — Schedule a Health Check
 
-**Why:** You want the system to self-monitor and alert you (via Telegram or memory) if any component goes down — Ollama, the Pi LiteLLM proxy, or the Mac forwarder.
+**Why:** You want the system to self-monitor and alert you (via Telegram or memory) if any component goes down — Ollama on the Spark or the Mac forwarder.
 
 **CLI command (inside sandbox):**
 
@@ -683,7 +680,7 @@ openshell sandbox connect nemoclaw-main
 
 # Every 30 minutes: check all services
 openclaw cron add "*/30 * * * *" \
-    "Run a health check: (1) verify Ollama is responding at http://100.93.220.104:11434/api/tags, (2) verify LiteLLM is responding at http://100.85.6.21:4000/health, (3) verify Mac forwarder is reachable at http://100.116.228.36:11435/api/tags. If any check fails, send an alert to the Telegram channel. Report the status of all three checks."
+    "Run a health check: (1) verify Ollama is responding at http://100.93.220.104:11434/api/tags, (2) verify Mac forwarder is reachable at http://100.116.228.36:11435/api/tags. If any check fails, send an alert to the Telegram channel. Report the status of both checks."
 
 # Every hour: sandbox status check
 openclaw cron add "0 * * * *" \
@@ -772,7 +769,7 @@ openclaw agents add coding-agent \
 
 # Create a research agent using the faster Mac model
 openclaw agents add research-agent \
-    --model qwen3:8b \
+    --model gemma4:27b \
     --system-prompt "You are a research assistant. Prioritize finding accurate information from multiple sources. Summarize findings concisely with source attribution."
 
 # List all agents
@@ -1097,7 +1094,7 @@ openclaw memory add \
 
 # Tell the agent to remember something from the current session
 # (type this in the chat UI or TUI):
-# "Remember this for all future sessions: the LiteLLM proxy is at http://100.85.6.21:4000/v1"
+# "Remember this for all future sessions: always use inference.local for model routing"
 ```
 
 **Web UI location:** Dashboard → Settings → Memory tab → "Add Memory" button → enter title and content → click "Save". The index rebuilds automatically after saving.
@@ -1311,14 +1308,6 @@ echo "=== Mac Ollama Forwarder ==="
 curl -s --connect-timeout 5 http://100.116.228.36:11435/api/tags | python3 -m json.tool | head -10
 
 echo ""
-echo "=== Pi LiteLLM Proxy ==="
-curl -s http://100.85.6.21:4000/health
-
-echo ""
-echo "=== Pi Uptime Kuma ==="
-curl -s --connect-timeout 5 http://100.85.6.21:3001 | grep -o '<title>.*</title>'
-
-echo ""
 echo "=== Tailscale Serve Status ==="
 tailscale serve status
 
@@ -1361,7 +1350,6 @@ check "OpenShell gateway"         "openshell status"
 check "nemoclaw-main sandbox"     "openshell sandbox list | grep -q 'nemoclaw-main.*Ready'"
 check "Spark Ollama API"          "curl -sf http://100.93.220.104:11434/api/tags"
 check "Mac Ollama forwarder"      "curl -sf --connect-timeout 5 http://100.116.228.36:11435/api/tags"
-check "Pi LiteLLM proxy"          "curl -sf http://100.85.6.21:4000/health"
 check "Port 18789 forward"        "ss -tlnp | grep -q 18789"
 check "Tailscale Serve"           "tailscale serve status | grep -q 'spark-caeb'"
 
@@ -1373,8 +1361,6 @@ SCRIPT
 chmod +x ~/workspace/nemoclaw/health-check.sh
 ~/workspace/nemoclaw/health-check.sh
 ```
-
-**Web UI location:** Open `http://100.85.6.21:3001` (Uptime Kuma) in your browser — shows a dashboard of all monitored endpoints with uptime history and current status.
 
 **Verify:** The health check script exits 0 when all checks pass. Investigate any `[FAIL]` lines using the corresponding recipe in this cookbook.
 
@@ -1488,88 +1474,11 @@ openshell sandbox connect gemini-dev   # → browser login for Google
 
 ---
 
-## Category 12: Raspberry Pi Components
+## Category 12: Retired Raspberry Pi Components
 
-### Recipe 35: Access and Use LiteLLM (Unified API Gateway)
-
-**What it is:** A proxy that presents a single OpenAI-compatible endpoint. You specify which model you want, and LiteLLM routes to the right machine.
-
-**Why:** Without LiteLLM, you need to know which machine has which model and hit the right IP/port. With it, you hit one endpoint and specify the model name.
-
-**Access:** `http://100.85.6.21:4000/v1`
-
-**Usage:**
-```bash
-# List all models available across all machines
-curl http://100.85.6.21:4000/v1/models
-
-# Chat with Nemotron 120B (routed to Spark automatically)
-curl http://100.85.6.21:4000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{"model":"nemotron-3-super:120b","messages":[{"role":"user","content":"hello"}]}'
-
-# Chat with qwen3:8b (routed to Mac automatically)
-curl http://100.85.6.21:4000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{"model":"qwen3:8b","messages":[{"role":"user","content":"hello"}]}'
-
-# Use from Python (any machine on the network)
-from openai import OpenAI
-client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="nemotron-3-super:120b",
-    messages=[{"role": "user", "content": "Explain transformers"}],
-)
-print(response.choices[0].message.content)
-```
-
-**Verify:** `curl http://100.85.6.21:4000/health`
-
-### Recipe 36: Access and Use Pi-hole (DNS + Ad Blocking)
-
-**What it is:** A DNS server that resolves custom hostnames (`spark.lab`, `mac.lab`, `ai.lab`) and blocks ads/trackers network-wide.
-
-**Why:** Type `spark.lab` instead of `100.93.220.104`. Plus your whole network gets ad blocking for free.
-
-**Access:** `http://100.85.6.21/admin` (web dashboard)
-
-**Setup your devices to use Pi-hole DNS:**
-1. Set your router's DNS to `100.85.6.21` (affects all devices), or
-2. Set individual device DNS to `100.85.6.21`
-
-**Add a custom DNS entry:**
-1. Open `http://100.85.6.21/admin`
-2. Login (password set during Pi-hole install)
-3. Go to Local DNS → DNS Records
-4. Add: `spark.lab` → `100.93.220.104`
-5. Add: `mac.lab` → `100.116.228.36`
-6. Add: `ai.lab` → `100.85.6.21`
-
-**Verify:** `nslookup spark.lab 100.85.6.21`
-
-### Recipe 37: Access and Use Uptime Kuma (Monitoring)
-
-**What it is:** A dashboard that checks if all your services are running and alerts you when something goes down.
-
-**Why:** You want to know immediately if Ollama crashes, the gateway dies, or the port forward drops — not find out when you try to chat.
-
-**Access:** `http://100.85.6.21:3001`
-
-**Monitors to set up:**
-1. Open `http://100.85.6.21:3001` and create an account
-2. Add monitors:
-
-| Monitor | Type | URL/Host | Interval |
-|---------|------|----------|----------|
-| Spark Ollama | HTTP | `http://100.93.220.104:11434/` | 60s |
-| Spark LM Studio | HTTP | `http://100.93.220.104:1234/v1/models` | 60s |
-| NemoClaw UI | HTTP | `http://100.93.220.104:18789/` | 60s |
-| Mac Ollama | TCP | `100.116.228.36:11435` | 60s |
-| LiteLLM | HTTP | `http://100.85.6.21:4000/health` | 60s |
-
-3. Configure alerts: Settings → Notifications → add Telegram/email/webhook
-
-**Verify:** Dashboard shows green for all monitors.
+> **Note:** The Raspberry Pi has been removed from the NemoClaw topology. The setup is now a two-node stack: DGX Spark + Mac Studio. Recipes 35 (LiteLLM), 36 (Pi-hole), and 37 (Uptime Kuma) are no longer applicable.
+>
+> If you need a unified API gateway (LiteLLM) or monitoring (Uptime Kuma), these can optionally be deployed on either the Spark or the Mac Studio as containers or host services. The `inference.local` endpoint inside sandboxes and the `openshell inference set` global route already handle model routing without LiteLLM.
 
 ---
 
@@ -1640,7 +1549,63 @@ openclaw channels add discord --token YOUR_DISCORD_BOT_TOKEN
 # Mention it or DM it to chat with the agent
 ```
 
-### Recipe 38c: What Channels Are NOT For
+### Recipe 38c: Add a WhatsApp Channel
+
+WhatsApp integration lets you message your NemoClaw agent from WhatsApp on your phone. Uses the WhatsApp Web bridge inside the sandbox.
+
+**Using the Makefile (recommended):**
+
+```bash
+# 1. Add WhatsApp network policy to allow WhatsApp servers
+make policy-whatsapp
+
+# 2. Run the WhatsApp setup wizard (will show a QR code)
+make whatsapp-setup
+
+# 3. Scan the QR code with WhatsApp on your phone
+#    (WhatsApp → Settings → Linked Devices → Link a Device)
+
+# 4. Check channel status
+make channels-status
+# Expected: whatsapp channel shows "connected"
+```
+
+**Manual steps (inside sandbox):**
+
+```bash
+openshell sandbox connect nemoclaw-main
+openclaw channels add whatsapp
+# Scan the QR code displayed in terminal with your phone
+```
+
+**What you can do through WhatsApp:**
+- Send text messages to the agent (the agent responds using the active model)
+- Send voice messages (if speech-to-text is configured)
+- The agent can send images and formatted text back
+
+**Troubleshooting:**
+- If the QR code expires, run `make whatsapp-setup` again
+- WhatsApp sessions expire after ~14 days of inactivity; re-scan to reconnect
+- Ensure the nemoclaw-main sandbox has the `whatsapp` network policy applied
+
+### Recipe 38d: Channel Setup via Makefile
+
+All channel operations have corresponding `make` targets for convenience:
+
+```bash
+# Telegram
+make policy-telegram     # Add network policy for Telegram servers
+make telegram-setup      # Add Telegram channel to OpenClaw
+
+# WhatsApp
+make policy-whatsapp     # Add network policy for WhatsApp servers
+make whatsapp-setup      # Add WhatsApp channel to OpenClaw
+
+# Status
+make channels-status     # Show all channel statuses
+```
+
+### Recipe 38e: What Channels Are NOT For
 
 Channels are for **you** to reach the agent. They are NOT for:
 - Agent-to-agent communication (use the Orchestrator for that)
@@ -1671,22 +1636,10 @@ models:
     model: nemotron-3-super:120b
     apiBase: http://100.93.220.104:11434
 
-  - title: "Qwen3 8B (Local Mac)"
+  - title: "Gemma 4 27B (Local Mac)"
     provider: ollama
-    model: qwen3:8b
+    model: gemma4:27b
     apiBase: http://100.116.228.36:11435
-
-  - title: "Qwen Coder (Local Spark)"
-    provider: ollama
-    model: qwen3-coder-next:q4_K_M
-    apiBase: http://100.93.220.104:11434
-
-  # Or use LiteLLM for automatic routing:
-  - title: "NemoClaw (via LiteLLM)"
-    provider: openai
-    model: nemotron-3-super:120b
-    apiBase: http://100.85.6.21:4000/v1
-    apiKey: unused
 ```
 
 **Usage:** Open Continue sidebar → select model → ask questions or highlight code and press Ctrl+L.
@@ -1705,22 +1658,20 @@ models:
    - API Key: `ollama`
    - Model: `nemotron-3-super:120b`
 
-**Or use LiteLLM for unified access:**
-   - API Base: `http://100.85.6.21:4000/v1`
-   - API Key: `unused`
-   - Model: any model name that LiteLLM knows
-
 ### Recipe 41: Any IDE with OpenAI-Compatible Settings
 
 **What:** Any tool that supports a "custom OpenAI endpoint" can use your NemoClaw models.
 
-**The universal endpoint:** `http://100.85.6.21:4000/v1` (LiteLLM on Pi)
-
 **Configuration for any tool:**
 ```
-API Base URL: http://100.85.6.21:4000/v1
-API Key: unused (or any string)
-Model: nemotron-3-super:120b  (or qwen3:8b, qwen3-coder-next:q4_K_M)
+API Base URL: http://100.93.220.104:11434/v1  (Spark Ollama)
+API Key: ollama (or any string)
+Model: nemotron-3-super:120b
+
+# Or for the Mac:
+API Base URL: http://100.116.228.36:11435/v1  (Mac Ollama)
+API Key: ollama (or any string)
+Model: gemma4:27b
 ```
 
 **Tools that work with this:**
@@ -1736,11 +1687,11 @@ Model: nemotron-3-super:120b  (or qwen3:8b, qwen3-coder-next:q4_K_M)
 **Python example:**
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+client = OpenAI(base_url="http://100.93.220.104:11434/v1", api_key="ollama")
 
 # Code completion
 response = client.chat.completions.create(
-    model="qwen3-coder-next:q4_K_M",
+    model="nemotron-3-super:120b",
     messages=[{
         "role": "user",
         "content": "Write a Python function to parse CSV files with error handling"
@@ -1749,7 +1700,7 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-**Why LiteLLM is the best endpoint for IDEs:** You configure one URL and switch models by name. When you want Nemotron for complex reasoning, use `nemotron-3-super:120b`. For fast completions, use `qwen3:8b`. No URL changes needed.
+**Tip:** Use the Spark endpoint (`100.93.220.104:11434`) for Nemotron 120B and the Mac endpoint (`100.116.228.36:11435`) for Gemma 4 27B. For fast completions, use `gemma4:27b` on the Mac.
 
 ---
 
@@ -1791,13 +1742,9 @@ Level 3: Agent-native config (PER-SANDBOX, independent)
 make use-nemotron
 # or: openshell inference set --provider local-ollama --model nemotron-3-super:120b
 
-# Switch to Qwen Coder (code-focused, local)
-make use-coder
-# or: openshell inference set --provider local-ollama --model qwen3-coder-next:q4_K_M
-
 # Switch to Mac's fast model (sub-second, local)
 make use-mac
-# or: openshell inference set --provider mac-ollama --model qwen3:8b
+# or: openshell inference set --provider mac-ollama --model gemma4:27b
 
 # Switch to LM Studio (Spark)
 openshell inference set --provider local-lmstudio --model <model-name>
@@ -1853,16 +1800,13 @@ vim ~/.codex/config.toml
 
 **Change the model line:**
 ```toml
-# Option A: Use a different local model (via inference.local)
-model = "qwen3-coder-next:q4_K_M"
-
-# Option B: Use the Mac's fast model
+# Option A: Use the Mac's fast model
 # Change provider base_url to Mac:
 [model_providers.nemoclaw]
 name = "Mac Fast"
 base_url = "http://100.116.228.36:11435/v1"
 env_key = "OPENAI_API_KEY"
-# And set: model = "qwen3:8b"
+# And set: model = "gemma4:27b"
 
 # Option C: Use OpenAI cloud (needs API key)
 model = "o4-mini"
@@ -1885,9 +1829,9 @@ model_provider = "openai"
 - Codex uses its own `config.toml` provider (can point anywhere)
 - Claude and Gemini use their own cloud APIs
 
-So you can have Nemotron on OpenClaw, Qwen Coder on Codex, Claude on Claude Code, and Gemini on Gemini CLI — all at the same time.
+So you can have Nemotron on OpenClaw, Gemma 4 on Codex (via Mac), Claude on Claude Code, and Gemini on Gemini CLI — all at the same time.
 
-**Can I run two different local models simultaneously?** Only if they fit in GPU memory together. Nemotron 120B (94GB) + Qwen Coder (51GB) = 145GB > 128GB Spark memory. You'd need to unload one first. But Nemotron (94GB) + qwen3:8b on Mac (5GB) works because they're on different machines.
+**Can I run two different local models simultaneously?** Only if they fit in GPU memory together on the same machine, or if they run on different machines. Nemotron 120B (94GB on Spark) + Gemma 4 27B on Mac works because they're on different machines.
 
 ---
 
@@ -1896,7 +1840,7 @@ So you can have Nemotron on OpenClaw, Qwen Coder on Codex, Claude on Claude Code
 | I want to... | Recipe | Key command |
 |---|---|---|
 | Add a new inference provider | 1 | `openshell provider create --name ... --type openai ...` |
-| Switch to the Mac's fast model | 2 | `openshell inference set --provider mac-ollama --model qwen3:8b` |
+| Switch to the Mac's fast model | 2 | `openshell inference set --provider mac-ollama --model gemma4:27b` |
 | Switch back to Nemotron 120B | 2 | `openshell inference set --provider local-ollama --model nemotron-3-super:120b` |
 | Download a new model | 3 | `ollama pull <model-name>` |
 | See what skills exist | 4 | `openclaw skills list` (inside sandbox) |
@@ -1931,15 +1875,13 @@ So you can have Nemotron on OpenClaw, Qwen Coder on Codex, Claude on Claude Code
 | Switch main agent to Gemini (subscription) | 32 | `openclaw configure --section model` → Google → browser login |
 | Understand subscription vs API key auth | 33 | See Recipe 33 comparison table |
 | Use cloud provider without API key | 34 | `openclaw configure --section model` inside sandbox (not `openshell provider`) |
-| Switch global inference route | 42 | `make use-nemotron` / `make use-coder` / `make use-mac` |
+| Switch global inference route | 42 | `make use-nemotron` / `make use-mac` |
 | Switch main agent to Claude/Gemini | 43 | `openclaw configure --section model` inside nemoclaw-main |
 | Change Codex model independently | 44 | Edit `~/.codex/config.toml` inside codex-dev sandbox |
 | See who uses what model | 45 | See Recipe 45 summary table |
-| Access Pi LiteLLM API | 35 | `curl http://100.85.6.21:4000/v1/chat/completions -d '{"model":"..."}' ` |
-| Access Pi-hole DNS admin | 36 | Open `http://100.85.6.21/admin` in browser |
-| Access Uptime Kuma dashboard | 37 | Open `http://100.85.6.21:3001` in browser |
+| (Retired) Pi LiteLLM / Pi-hole / Uptime Kuma | 35-37 | Pi removed from topology — see Category 12 note |
 | Add a Telegram channel | 38 | `openclaw channels add telegram --token <BOT_TOKEN>` inside sandbox |
 | Chat with agent from Telegram | 38 | Message your bot → agent responds using Nemotron |
 | Use NemoClaw as VS Code coding assistant | 39 | Continue.dev extension → set endpoint to `http://100.93.220.104:11434/v1` |
 | Use NemoClaw as Cursor coding assistant | 40 | Cursor Settings → Models → add Ollama at `http://100.93.220.104:11434` |
-| Use any IDE with LiteLLM | 41 | Set OpenAI base URL to `http://100.85.6.21:4000/v1` in any IDE |
+| Use any IDE with Ollama | 41 | Set OpenAI base URL to `http://100.93.220.104:11434/v1` (Spark) or `http://100.116.228.36:11435/v1` (Mac) |

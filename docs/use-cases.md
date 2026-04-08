@@ -14,7 +14,7 @@ Step-by-step guides for the most common things you'll do with NemoClaw after dep
    - **From Mac (LAN):** `http://spark-caeb.local:18789`
    - **From Mac (NVIDIA Sync):** Click the OpenClaw entry in the Sync app
    - **From anywhere (Tailscale):** `http://<spark-tailscale-ip>:18789`
-   - **From Pi relay:** `http://ai.lab:18789` (if DNS configured)
+
 
 2. Type your message in the chat interface.
 
@@ -38,7 +38,7 @@ curl -s -o /dev/null -w "%{http_code}" http://spark-caeb.local:18789
 
 1. Switch to the Mac's fast model:
    ```bash
-   openshell inference set --provider mac-ollama --model qwen3:8b
+   openshell inference set --provider mac-ollama --model gemma4:27b
    ```
 
 2. Chat in the browser — responses come from Mac (sub-second latency).
@@ -52,14 +52,11 @@ curl -s -o /dev/null -w "%{http_code}" http://spark-caeb.local:18789
 
 **Available models:**
 ```bash
-# Heavy reasoning (Spark)
+# Heavy reasoning + code generation (Spark)
 openshell inference set --provider local-ollama --model nemotron-3-super:120b
 
-# Code generation (Spark)
-openshell inference set --provider local-ollama --model qwen3-coder-next:q4_K_M
-
 # Fast chat (Mac)
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 
 # NVIDIA Cloud (optional)
 openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
@@ -135,7 +132,7 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
 **Switch Codex to a different model:**
 ```bash
 # Inside the sandbox, edit config:
-# Change model = "qwen3-coder-next:q4_K_M" for code-focused tasks
+# Change model = "nemotron-3-super:120b" for code-focused tasks
 ```
 
 ---
@@ -251,65 +248,6 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
 
 ---
 
-## Use Case 9: Use LiteLLM as a Universal API Endpoint
-
-**What:** Access any model on any machine through a single API endpoint at `ai.lab:4000`. Useful for scripts, notebooks, and third-party tools.
-
-**Steps:**
-
-1. The LiteLLM proxy runs on the Pi. It routes by model name:
-   - `nemotron-3-super:120b` -> Spark Ollama
-   - `qwen3-coder-next:q4_K_M` -> Spark Ollama
-   - `qwen3:8b` -> Mac Ollama
-
-2. Use it from any machine on the network:
-   ```bash
-   # From Python
-   from openai import OpenAI
-   client = OpenAI(base_url="http://ai.lab:4000/v1", api_key="unused")
-   response = client.chat.completions.create(
-       model="nemotron-3-super:120b",
-       messages=[{"role": "user", "content": "hello"}],
-   )
-   print(response.choices[0].message.content)
-   ```
-
-3. Or via curl:
-   ```bash
-   curl http://ai.lab:4000/v1/chat/completions \
-     -H "Content-Type: application/json" \
-     -d '{"model": "qwen3:8b", "messages": [{"role": "user", "content": "hello"}]}'
-   ```
-
-4. Check available models:
-   ```bash
-   curl http://ai.lab:4000/v1/models
-   ```
-
----
-
-## Use Case 10: Monitor Everything from the Pi Dashboard
-
-**What:** Check the health of all services from a single dashboard.
-
-**Steps:**
-
-1. Open Uptime Kuma in a browser:
-   ```
-   http://raspi.local:3001
-   ```
-
-2. The dashboard shows uptime/downtime for:
-   - Spark Ollama (port 11434)
-   - Spark OpenShell gateway (port 8080)
-   - Spark NemoClaw UI (port 18789)
-   - Mac Ollama (port 11434)
-   - LiteLLM proxy (port 4000)
-
-3. Configure alerts (email, Telegram, etc.) in the Uptime Kuma settings.
-
----
-
 ## Quick Reference: What's Where
 
 | What you want to do | Where | Command/URL |
@@ -320,10 +258,7 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
 | Connect to Claude Code | Spark terminal | `openshell sandbox connect claude-dev` |
 | Connect to Codex | Spark terminal | `openshell sandbox connect codex-dev` |
 | Connect to Gemini | Spark terminal | `openshell sandbox connect gemini-dev` |
-| Use any model via API | Any machine | `curl http://ai.lab:4000/v1/chat/completions` |
-| Check health dashboard | Browser | `http://raspi.local:3001` |
 | View sandbox logs | Spark terminal | `openshell logs <name> --tail` |
-| Manage DNS | Browser | `http://raspi.local/admin` |
 | Check GPU usage | Spark terminal | `nvidia-smi` |
 | Check loaded models | Spark terminal | `ollama ps` |
 | Stop everything | Spark terminal | `openshell gateway stop` |

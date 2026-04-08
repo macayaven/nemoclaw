@@ -9,13 +9,12 @@ This is the definitive guide for deploying a complete NemoClaw system from scrat
 After following this guide you will have:
 
 - **NemoClaw gateway** running on a DGX Spark, serving as the central AI inference router
-- **Mac Studio** registered as a secondary inference provider via Ollama
-- **Raspberry Pi** acting as a lightweight proxy (LiteLLM), DNS resolver (Pi-hole), uptime monitor (Uptime Kuma), and Tailscale subnet router
+- **Mac Studio** registered as a secondary inference provider via Ollama (Gemma 4 27B)
 - **Coding agent sandboxes** for Claude Code, Codex, and Gemini CLI — all routing through the NemoClaw gateway
 - **Remote access** via Tailscale and the NemoClaw iOS app
 - **End-to-end test coverage** validating every layer
 
-The full stack lets you run large models on the Spark, offload to the Mac, monitor everything from the Pi, and access it all securely from anywhere via Tailscale.
+The full stack lets you run Nemotron 120B on the Spark, offload fast inference to Gemma 4 on the Mac, and access it all securely from anywhere via Tailscale.
 
 ---
 
@@ -23,39 +22,37 @@ The full stack lets you run large models on the Spark, offload to the Mac, monit
 
 ### Hardware
 
-| Device | Role |
-|---|---|
-| DGX Spark | Primary inference host, NemoClaw gateway |
-| Mac Studio | Secondary inference provider (Ollama) |
-| Raspberry Pi (4 or 5) | Proxy, DNS, monitoring, subnet router |
+| Device | Role | Key Specs |
+|---|---|---|
+| **DGX Spark** | Primary inference host, NemoClaw gateway | NVIDIA GPU, runs Nemotron 120B |
+| **Mac Studio M4 Max** | Secondary inference, operator workstation | 128GB unified memory, runs Gemma 4 27B |
 
 ### Software
 
-Install the following on the machine you'll run commands from (typically the Spark or your laptop):
+Install the following on the machine you'll run commands from (typically the Spark or the Mac):
 
 | Tool | Version | Install |
 |---|---|---|
-| Docker | ≥ 28.04 | https://docs.docker.com/engine/install/ |
+| Docker | >= 28.04 | https://docs.docker.com/engine/install/ |
 | Ollama | latest | `curl -fsSL https://ollama.com/install.sh \| sh` |
-| Node.js | ≥ 20 | https://nodejs.org/ or `nvm install 20` |
+| Node.js | >= 20 | https://nodejs.org/ or `nvm install 20` |
 | uv | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Python | 3.12+ | managed by `uv` |
 
 ### Network
 
-- **SSH access** to all three machines (Spark, Mac, Pi) using the same SSH user
-- **Tailscale** installed and authenticated on all three machines (`tailscale up`)
-- All machines on the same LAN *or* reachable via Tailscale
+- **SSH access** to the DGX Spark from the Mac Studio
+- **Tailscale** installed and authenticated on both machines (`tailscale up`)
+- Both machines on the same LAN *or* reachable via Tailscale
 
 ### Project setup
 
-Clone the repo and install dependencies before running any phase:
-
 ```bash
-git clone https://github.com/your-org/nemoclaw.git
+git clone https://github.com/macayaven/nemoclaw.git
 cd nemoclaw
 cp .env.example .env
 # Edit .env with your actual IPs, hostnames, and credentials
+cd tests
 uv sync
 ```
 
@@ -75,7 +72,7 @@ This checks:
 - Python version is 3.12+
 - Required CLI tools are on `PATH` (docker, ollama, node, uv, ssh, tailscale)
 - `.env` is present and all required variables are set
-- SSH connectivity to Spark, Mac, and Pi
+- SSH connectivity to Spark and Mac
 - Tailscale is up and peers are reachable
 
 ### Common fixes
@@ -94,74 +91,123 @@ Do not proceed to Phase 1 until all Phase 0 tests pass.
 
 ---
 
-## 4. Phase 1 — Deploy NemoClaw on DGX Spark
+## 4. Phase 1 — Deploy NemoClaw on DGX Spark (~30 min)
 
-This phase installs and configures the NemoClaw gateway on the DGX Spark. The gateway is the central router that all agents, clients, and providers connect to.
+> **Goal:** Working NemoClaw deployment on the Spark with Nemotron 3 Super 120B.
+> **Exit test:** `nemoclaw my-assistant status` shows healthy; chat works via `openclaw tui`.
 
-### Step 1 — Run the setup wizard
+### Step 1.1 — Run the Spark-specific setup
 
-```bash
-nemoclaw setup-spark
-```
-
-This bootstraps the Spark environment: creates directories, installs the gateway service, and generates initial configuration.
-
-### Step 2 — Configure Ollama on the Spark
-
-Ollama must listen on all interfaces (not just `127.0.0.1`) so the NemoClaw gateway and remote clients can reach it:
+**Machine:** spark-caeb.local
 
 ```bash
-# On the Spark
-sudo systemctl edit ollama --force --full
+# Download and run the NemoClaw installer
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-Add or update the `[Service]` section:
+This launches the interactive onboarding wizard which:
+1. Installs Node.js if absent
+2. Installs OpenShell CLI
+3. Creates the OpenShell gateway
+4. Registers inference providers
+5. Creates the NemoClaw sandbox with policies
+6. Configures inference routing
 
-```ini
+**If you need Spark-specific fixes separately:**
+```bash
+sudo nemoclaw setup-spark
+```
+
+### Step 1.2 — Configure Ollama for sandbox access
+
+**Why:** Sandboxes run inside containers — they can't reach localhost. Ollama must listen on all interfaces.
+
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d/
+
+sudo tee /etc/systemd/system/ollama.service.d/override.conf << 'EOF'
 [Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
+Environment=OLLAMA_HOST=0.0.0.0
+Environment=OLLAMA_KEEP_ALIVE=-1
+EOF
 
-Restart Ollama:
-
-```bash
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
-ollama list  # verify models are visible
 ```
 
-### Step 3 — Start the NemoClaw gateway
-
+**Verify:**
 ```bash
-nemoclaw gateway start
+ss -tlnp | grep 11434
+# Expected: *:11434 (all interfaces)
 ```
 
-Verify it is running:
+### Step 1.3 — Register local Ollama as provider
+
+**Why:** This tells OpenShell where the local inference engine is. Use `host.openshell.internal` — the special hostname that resolves to the gateway host from inside sandboxes.
 
 ```bash
-nemoclaw gateway status
-# Expected: gateway running on :8080
+openshell provider create \
+    --name local-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
 ```
 
-### Step 4 — Register the Spark as a provider
+### Step 1.4 — Set inference route to Nemotron
 
 ```bash
-nemoclaw provider register \
-  --name spark-ollama \
-  --type ollama \
-  --url http://localhost:11434
+openshell inference set \
+    --provider local-ollama \
+    --model nemotron-3-super:120b
+
+# Verify
+openshell inference get
 ```
 
-### Step 5 — Set the default inference provider
+### Step 1.5 — Create the NemoClaw sandbox
 
 ```bash
-nemoclaw inference set-default spark-ollama
+openshell sandbox create \
+    --keep \
+    --forward 18789 \
+    --name nemoclaw-main \
+    --from openclaw \
+    -- openclaw-start
 ```
 
-### Step 6 — Create the default sandbox
+### Step 1.6 — Verify end-to-end
 
 ```bash
-nemoclaw sandbox create default
+# Check sandbox status
+nemoclaw nemoclaw-main status
+
+# Connect to the sandbox
+nemoclaw nemoclaw-main connect
+
+# Inside the sandbox, test the TUI
+openclaw tui
+
+# Or test via CLI
+openclaw agent --agent main --local -m "hello" --session-id test
+
+# Test inference routing from sandbox
+curl https://inference.local/v1/chat/completions \
+    --json '{"messages":[{"role":"user","content":"hello"}],"max_tokens":10}'
+```
+
+### Step 1.7 — Pre-warm Nemotron
+
+```bash
+# Load the model into GPU memory
+curl http://$(hostname -I | awk '{print $1}'):11434/api/generate \
+    -d '{"model": "nemotron-3-super:120b", "prompt": "hello", "stream": false}'
+```
+
+### Step 1.8 — Start the monitoring TUI
+
+```bash
+# In a separate terminal/tmux pane
+openshell term
 ```
 
 ### Validate Phase 1
@@ -170,90 +216,107 @@ nemoclaw sandbox create default
 uv run pytest tests/phase1_core/ -v
 ```
 
-All tests must pass before continuing. This suite verifies gateway health, provider registration, and basic inference round-trips.
+All 25 tests must pass. This verifies gateway health, provider registration, inference routing, and sandbox lifecycle.
 
 ---
 
-## 5. Phase 2 — Integrate Mac Studio
+## 5. Phase 2 — Integrate Mac Studio (~20 min)
 
-This phase registers the Mac Studio as a secondary inference provider, letting NemoClaw route overflow requests or specific model requests to the Mac.
+> **Goal:** Use the Mac as the primary interaction point with OpenClaw.app, and as a secondary inference backend running Gemma 4.
+> **Exit test:** OpenClaw.app connects to Spark gateway; Gemma 4 inference works from Mac Ollama.
 
-### Step 1 — Configure Ollama on the Mac
+### Step 2.1 — Start Ollama on Mac with all-interface binding
 
-Create a launchd plist so Ollama starts automatically and listens on all interfaces:
+**Machine:** mac-studio.local
 
 ```bash
-# On the Mac — run this from your laptop over SSH or directly on the Mac
-ssh ${SSH_USER}@${MAC_HOSTNAME} "cat > ~/Library/LaunchAgents/com.ollama.server.plist" << 'EOF'
+# Permanent via launchd (recommended)
+cat > ~/Library/LaunchAgents/com.ollama.serve.plist << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.ollama.server</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/ollama</string>
-    <string>serve</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OLLAMA_HOST</key>
-    <string>0.0.0.0:11434</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/ollama.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/ollama.err</string>
+    <key>Label</key>
+    <string>com.ollama.serve</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/ollama</string>
+        <string>serve</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OLLAMA_HOST</key>
+        <string>0.0.0.0:11434</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ollama.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ollama.err.log</string>
 </dict>
 </plist>
-EOF
+PLIST
+
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ollama.serve.plist
 ```
 
-Load the agent:
+### Step 2.2 — Pull Gemma 4 model
 
 ```bash
-ssh ${SSH_USER}@${MAC_HOSTNAME} "launchctl load ~/Library/LaunchAgents/com.ollama.server.plist"
+# Primary fast model for Mac Studio
+ollama pull gemma4:27b
 ```
 
-Verify Ollama is reachable from the Spark:
+### Step 2.3 — Register Mac Ollama as provider on Spark
+
+**Machine:** spark-caeb.local
 
 ```bash
-curl http://${MAC_IP}:11434/api/tags
+MAC_IP=$(ssh mac-studio.local "ipconfig getifaddr en0")
+
+openshell provider create \
+    --name mac-ollama \
+    --type openai \
+    --credential OPENAI_API_KEY=not-needed \
+    --config OPENAI_BASE_URL=http://$MAC_IP:11434/v1
 ```
 
-### Step 2 — Register the Mac as a provider
+### Step 2.4 — Access NemoClaw UI from Mac
 
-Back on the Spark (or from wherever you run `nemoclaw` commands):
+Open the browser on the Mac:
+- **LAN**: `http://spark-caeb.local:18789`
+- **Tailscale**: `http://<spark-tailscale-ip>:18789`
+
+### Step 2.5 — Install OpenClaw.app on Mac
+
+Install the macOS companion app. Configure it to connect to the Spark gateway:
+
+- **Connection**: WebSocket to `spark-caeb.local:18789`
+- **Tailscale mode**: Use Tailscale IP if connecting remotely
+- Grant permissions: Notifications, Accessibility, Screen Recording, Microphone, Speech Recognition
+
+The companion app gives you:
+- Menu bar quick access
+- Voice wake (trigger phrase)
+- Native macOS notifications
+- Screen capture and camera as agent tools
+- AppleScript automation exposure
+
+### Step 2.6 — Test provider switching
 
 ```bash
-nemoclaw provider register \
-  --name mac-ollama \
-  --type ollama \
-  --url http://${MAC_IP}:11434
+# Switch to Mac fast model
+openshell inference set --provider mac-ollama --model gemma4:27b
+
+# Send a test message — should respond faster (smaller model)
+
+# Switch back to Spark heavy model
+openshell inference set --provider local-ollama --model nemotron-3-super:120b
 ```
-
-### Step 3 — Install OpenClaw.app
-
-Download and install the OpenClaw macOS app on the Mac Studio. OpenClaw provides a native UI for managing sandboxes and monitoring inference traffic.
-
-```bash
-# Download the latest release
-curl -L https://github.com/your-org/nemoclaw/releases/latest/download/OpenClaw.dmg \
-  -o /tmp/OpenClaw.dmg
-
-# Mount and install
-hdiutil attach /tmp/OpenClaw.dmg
-cp -R /Volumes/OpenClaw/OpenClaw.app /Applications/
-hdiutil detach /Volumes/OpenClaw
-```
-
-Launch OpenClaw.app and point it at your Spark gateway: `http://${SPARK_IP}:8080`.
 
 ### Validate Phase 2
 
@@ -261,326 +324,280 @@ Launch OpenClaw.app and point it at your Spark gateway: `http://${SPARK_IP}:8080
 uv run pytest tests/phase2_mac/ -v
 ```
 
-This verifies that the Mac provider is registered, reachable, and can serve an inference request through the NemoClaw gateway.
+All 17 tests must pass. This verifies Mac Ollama is serving Gemma 4, provider registration works, and switching between Spark and Mac providers succeeds.
 
 ---
 
-## 6. Phase 3 — Set Up Raspberry Pi
+## 6. Phase 3 — Coding Agent Sandboxes (~30 min)
 
-The Pi provides lightweight services that complement the main inference stack: LiteLLM proxy, Pi-hole DNS, Uptime Kuma monitoring, and Tailscale subnet routing.
+> **Goal:** Run Claude Code, Codex, and Gemini CLI alongside OpenClaw in separate sandboxes on the Spark.
+> **Exit test:** Four sandboxes running simultaneously, each with its own policies and inference paths.
 
-### Step 1 — Install LiteLLM on the Pi
+### Step 3.1 — Create Claude Code sandbox
 
-SSH into the Pi:
-
-```bash
-ssh ${SSH_USER}@${PI_HOSTNAME}
-```
-
-Install LiteLLM:
+**Why:** Claude Code is the best-supported OpenShell agent — full policy coverage out of the box. Uses Anthropic's API for inference (cloud).
 
 ```bash
-pip install litellm[proxy]
+export ANTHROPIC_API_KEY="sk-ant-..."
+openshell provider create --name anthropic --type claude --from-existing
+
+openshell sandbox create \
+    --keep \
+    --name claude-dev \
+    --provider anthropic \
+    -- claude
 ```
 
-Create the LiteLLM config at `~/litellm-config.yaml`:
+### Step 3.2 — Create Codex sandbox
 
-```yaml
-model_list:
-  - model_name: spark-default
-    litellm_params:
-      model: ollama/llama3
-      api_base: http://${SPARK_IP}:11434
-
-  - model_name: mac-default
-    litellm_params:
-      model: ollama/llama3
-      api_base: http://${MAC_IP}:11434
-
-general_settings:
-  master_key: "litellm-master-key-change-me"
-  port: 4000
-```
-
-### Step 2 — Create a systemd service for LiteLLM
+**Why:** Codex has native Ollama support — it can talk directly to the Spark's Ollama. Codex requires a custom network policy.
 
 ```bash
-sudo tee /etc/systemd/system/litellm.service > /dev/null << 'EOF'
-[Unit]
-Description=LiteLLM Proxy
-After=network.target
+export OPENAI_API_KEY="sk-..."
+openshell provider create --name openai-codex --type codex --from-existing
 
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi
-ExecStart=/home/pi/.local/bin/litellm --config /home/pi/litellm-config.yaml
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable litellm
-sudo systemctl start litellm
-sudo systemctl status litellm
+openshell sandbox create \
+    --keep \
+    --name codex-dev \
+    --provider openai-codex \
+    -- codex
 ```
 
-### Step 3 — Set up Pi-hole DNS
+**Configure Codex to use local Ollama inside the sandbox:**
+```bash
+openshell sandbox connect codex-dev
+
+# Inside sandbox:
+mkdir -p ~/.codex
+cat > ~/.codex/config.toml << 'TOML'
+model = "nemotron-3-super:120b"
+model_provider = "ollama"
+approval_policy = "on-request"
+sandbox_mode = "external-sandbox"
+
+[model_providers.ollama]
+name = "Ollama (Spark Local)"
+base_url = "http://host.openshell.internal:11434/v1"
+env_key = "OLLAMA_API_KEY"
+wire_api = "responses"
+
+[features]
+memories = true
+TOML
+```
+
+### Step 3.3 — Create Gemini CLI sandbox
+
+**Why:** Gemini CLI is NOT a listed OpenShell agent — needs a custom sandbox and network policy for Google API endpoints.
 
 ```bash
-curl -sSL https://install.pi-hole.net | bash
+openshell provider create \
+    --name gemini \
+    --type generic \
+    --credential GEMINI_API_KEY="${GEMINI_API_KEY}"
+
+openshell sandbox create \
+    --keep \
+    --name gemini-dev \
+    --provider gemini \
+    -- bash
 ```
 
-Follow the interactive installer. When prompted for upstream DNS, use `1.1.1.1` and `8.8.8.8`. After installation, set a Pi-hole password:
+**Install Gemini CLI inside the sandbox:**
+```bash
+openshell sandbox connect gemini-dev
+
+# Inside sandbox:
+npm install -g @google/gemini-cli
+gemini -p "hello"
+```
+
+### Step 3.4 — Verify all sandboxes
 
 ```bash
-pihole -a -p
+openshell sandbox list                    # All 4 should be Ready
+openshell term                            # Real-time monitoring
 ```
 
-Point your router's DHCP DNS setting to `${PI_IP}` so all LAN devices use Pi-hole.
+### Agent inference summary
 
-### Step 4 — Install Uptime Kuma
-
-```bash
-docker run -d \
-  --name uptime-kuma \
-  --restart unless-stopped \
-  -p 3001:3001 \
-  -v uptime-kuma:/app/data \
-  louislam/uptime-kuma:1
-```
-
-Access the Uptime Kuma dashboard at `http://${PI_IP}:3001` and add monitors for:
-- NemoClaw gateway: `http://${SPARK_IP}:8080/health`
-- Spark Ollama: `http://${SPARK_IP}:11434`
-- Mac Ollama: `http://${MAC_IP}:11434`
-- LiteLLM proxy: `http://${PI_IP}:4000/health`
-
-### Step 5 — Configure Tailscale subnet routing
-
-On the Pi, advertise your LAN subnet so Tailscale clients can reach LAN devices:
-
-```bash
-sudo tailscale up --advertise-routes=${TAILSCALE_ADVERTISED_SUBNET} --accept-dns=false
-```
-
-In the Tailscale admin console (https://login.tailscale.com/admin/machines), approve the subnet route for the Pi.
+| Agent | Sandbox | Inference Path | Model | Cloud/Local |
+|---|---|---|---|---|
+| OpenClaw | `nemoclaw-main` | `inference.local` → Ollama | nemotron-3-super:120b | **Local** |
+| Claude Code | `claude-dev` | Anthropic API | claude-sonnet-4-6 | Cloud |
+| Codex | `codex-dev` | Ollama direct (config.toml) | nemotron-3-super:120b | **Local** |
+| Gemini CLI | `gemini-dev` | Google Gemini API | gemini-3-flash | Cloud |
 
 ### Validate Phase 3
-
-Exit the Pi SSH session and run from your local machine:
-
-```bash
-uv run pytest tests/phase3_pi/ -v
-```
-
-This checks LiteLLM proxy health, Pi-hole DNS resolution, Uptime Kuma reachability, and Tailscale subnet routing.
-
----
-
-## 7. Phase 4 — Deploy Coding Agents
-
-This phase creates sandboxes for three coding agents, each routing AI requests through the NemoClaw gateway.
-
-### Claude Code sandbox (full policy)
-
-Claude Code works out of the box with the NemoClaw gateway using the full policy:
-
-```bash
-nemoclaw sandbox create claude-code \
-  --policy full \
-  --provider spark-ollama
-```
-
-Test that Claude Code can reach the gateway:
-
-```bash
-nemoclaw sandbox exec claude-code -- claude --version
-```
-
-### Codex sandbox (custom policy + Ollama config)
-
-Codex requires a custom policy and an `ollama-config.toml` pointing at the gateway:
-
-```bash
-nemoclaw sandbox create codex \
-  --policy custom \
-  --provider spark-ollama
-```
-
-Create the Codex Ollama config inside the sandbox:
-
-```bash
-nemoclaw sandbox exec codex -- bash -c "mkdir -p ~/.codex && cat > ~/.codex/ollama-config.toml << 'EOF'
-[ollama]
-base_url = \"http://${SPARK_IP}:11434\"
-model = \"llama3\"
-EOF"
-```
-
-### Gemini CLI sandbox (custom sandbox + policy)
-
-Gemini CLI needs its own sandbox definition and a custom policy:
-
-```bash
-nemoclaw sandbox create gemini-cli \
-  --policy custom \
-  --sandbox-def gemini \
-  --provider spark-ollama
-```
-
-If you have a `GEMINI_API_KEY`, inject it into the sandbox environment:
-
-```bash
-nemoclaw sandbox env set gemini-cli GEMINI_API_KEY="${GEMINI_API_KEY}"
-```
-
-### Validate Phase 4
 
 ```bash
 uv run pytest tests/phase4_agents/ -v
 ```
 
-This suite verifies that all three sandboxes exist, can execute commands, and successfully route an inference request through the NemoClaw gateway.
-
 ---
 
-## 8. Phase 5 — Enable Remote Access
+## 7. Phase 4 — Mobile Access + Tailscale Hardening (~10 min)
 
-This phase configures secure remote access via Tailscale and the NemoClaw iOS app.
+> **Goal:** Access NemoClaw from iPhone and harden remote access.
+> **Exit test:** iOS app connects to Spark gateway via Tailscale.
 
-### Step 1 — Configure the Tailscale gateway on the Spark
+### Step 4.1 — Configure Tailscale-native gateway access
 
-```bash
-nemoclaw gateway configure-tailscale \
-  --tailscale-ip ${SPARK_TAILSCALE_IP} \
-  --port 8080
-```
-
-Verify the gateway is reachable via the Tailscale IP from another device on your Tailnet:
+**Machine:** spark-caeb.local
 
 ```bash
-curl http://${SPARK_TAILSCALE_IP}:8080/health
+# Tailnet-only serve (recommended for private access)
+openclaw gateway --tailscale serve
 ```
 
-### Step 2 — Install the iOS app
+### Step 4.2 — Install iOS app
 
-Download the NemoClaw iOS app from the App Store (search "NemoClaw") or via TestFlight if you are on a pre-release build.
+- Join the OpenClaw **TestFlight** beta or install from the App Store
+- Configure: Enter Spark's Tailscale IP + port 18789
 
-Configure the app:
-1. Open NemoClaw on iOS
-2. Go to Settings → Gateway
-3. Enter `http://${SPARK_TAILSCALE_IP}:8080`
-4. Tap "Connect" — you should see the gateway status turn green
+### Step 4.3 — Verify mobile access
 
-Ensure Tailscale is running on your iPhone (`tailscale` app installed and connected to your Tailnet).
+- Open the iOS app — should discover and connect to the Spark gateway
+- Send a message — should get a response from Nemotron
 
-### Validate Phase 5
+### Validate Phase 4
 
 ```bash
 uv run pytest tests/phase5_mobile/ -v
 ```
 
-This verifies that the gateway is reachable on the Tailscale IP and that the Tailscale subnet route from the Pi is functioning end-to-end.
-
 ---
 
-## 9. Post-Deployment
+## 8. Phase 5 — Orchestrator + Inter-Agent Cooperation (~30 min)
 
-### Provider switching cheatsheet
+> **Goal:** Enable agents to cooperate through an orchestrator that delegates tasks across sandboxes.
+> **Exit test:** `python -m orchestrator delegate --agent codex --prompt "write hello world"` returns generated code.
 
-| Command | Effect |
-|---|---|
-| `nemoclaw inference set-default spark-ollama` | Route all requests to the Spark |
-| `nemoclaw inference set-default mac-ollama` | Route all requests to the Mac |
-| `nemoclaw provider list` | Show all registered providers and their status |
-| `nemoclaw provider status spark-ollama` | Check a specific provider |
-
-### Monitoring with `openshell term`
-
-Open a live terminal session with any sandbox:
+### Step 5.1 — Set up shared workspace
 
 ```bash
-openshell term claude-code   # attach to Claude Code sandbox
-openshell term codex          # attach to Codex sandbox
-openshell term gemini-cli     # attach to Gemini CLI sandbox
+mkdir -p ~/workspace/shared-agents/{inbox,outbox,context}
+mkdir -p ~/workspace/shared-agents/inbox/{openclaw,claude,codex,gemini}
+mkdir -p ~/workspace/shared-agents/outbox/{openclaw,claude,codex,gemini}
 ```
 
-### Day-to-day usage
+### Step 5.2 — Install the orchestrator
 
-- **Check gateway health**: `nemoclaw gateway status`
-- **View active sandboxes**: `nemoclaw sandbox list`
-- **Tail gateway logs**: `nemoclaw gateway logs -f`
-- **Restart gateway**: `nemoclaw gateway restart`
-- **Update a provider URL**: `nemoclaw provider update mac-ollama --url http://${MAC_IP}:11434`
-- **Run the full test suite**: `uv run pytest tests/ -v`
+```bash
+cd ~/workspace/nemoclaw
+pip install -e orchestrator/
+```
+
+### Step 5.3 — Test delegation
+
+```bash
+# Health check
+python -m orchestrator health
+
+# Single delegation
+python -m orchestrator delegate --agent codex --prompt "Write a Python function that checks if a number is prime"
+
+# Multi-agent pipeline: research → implement → review
+python -m orchestrator pipeline \
+  --steps "gemini:research,codex:implement,claude:review" \
+  --prompt "Build a rate limiter for a FastAPI application"
+
+# Parallel specialists
+python -m orchestrator parallel \
+  --agents "codex,claude" \
+  --prompt "Optimize this function: def fib(n): return fib(n-1) + fib(n-2) if n > 1 else n"
+```
+
+### Validate Phase 5
+
+```bash
+uv run pytest tests/phase6_orchestrator/ -v
+```
 
 ---
 
-## 10. Troubleshooting
+## 9. Provider Switching Cheatsheet
+
+```bash
+# Heavy model (Nemotron 120B on Spark) — default
+openshell inference set --provider local-ollama --model nemotron-3-super:120b
+
+# Fast model (Gemma 4 27B on Mac Studio)
+openshell inference set --provider mac-ollama --model gemma4:27b
+
+# NVIDIA Cloud (via API Catalog)
+openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
+
+# Check current route
+openshell inference get
+
+# List all providers
+openshell provider list
+```
+
+---
+
+## 10. Key URLs
+
+| Service | URL | Notes |
+|---|---|---|
+| NemoClaw UI | `http://spark-caeb.local:18789` | Browser chat |
+| NemoClaw (Tailscale) | `http://<spark-tailscale>:18789` | Remote access |
+| Spark Ollama API | `http://spark-caeb.local:11434` | Nemotron 120B |
+| Mac Ollama API | `http://mac-studio.local:11434` | Gemma 4 27B |
+
+---
+
+## 11. Troubleshooting
 
 ### Ollama only listening on 127.0.0.1
 
 **Symptom**: `curl http://${SPARK_IP}:11434` times out but `curl http://127.0.0.1:11434` works.
 
-**Fix**: Set `OLLAMA_HOST=0.0.0.0:11434` in the Ollama service environment (see Phase 1, Step 2) and restart the service.
+**Fix**: Set `OLLAMA_HOST=0.0.0.0:11434` in the Ollama service environment (see Phase 1, Step 1.2) and restart.
 
 ### Gateway timeout
 
 **Symptom**: `nemoclaw gateway status` returns a timeout or connection refused.
 
 **Fix**:
-1. Check the gateway is running: `nemoclaw gateway start`
+1. Check the gateway is running: `openshell gateway start`
 2. Check the port is not blocked: `sudo ss -tlnp | grep 8080`
-3. Check firewall rules: `sudo ufw status` — allow port 8080 if needed: `sudo ufw allow 8080/tcp`
+3. Check firewall rules: `sudo ufw status` — allow port 8080 if needed
 
-### Port conflicts
+### Port forward dead on :18789
 
-**Symptom**: Gateway fails to start with "address already in use".
+**Symptom**: Browser can't reach the NemoClaw UI.
 
-**Fix**: Find and stop the conflicting process:
-
+**Fix**:
 ```bash
-sudo ss -tlnp | grep 8080
-# Note the PID, then:
-sudo kill <PID>
-nemoclaw gateway start
-```
+# Check forward status
+openshell forward list
 
-To change the gateway port permanently:
+# Recreate the forward
+openshell forward stop 18789 || true
+openshell forward start 18789 nemoclaw-main --background
 
-```bash
-nemoclaw gateway configure --port 8090
+# If that fails, check if the app process is running inside the sandbox
+openshell sandbox connect nemoclaw-main
+# Inside: check listening ports and process list
 ```
 
 ### Sandbox creation fails
 
-**Symptom**: `nemoclaw sandbox create` exits with an error.
+**Symptom**: `openshell sandbox create` exits with an error.
 
 **Fix**:
 1. Ensure Docker is running: `docker info`
-2. Ensure your user is in the `docker` group: `groups $USER` — if not, `sudo usermod -aG docker $USER` and log out/in
-3. Check available disk space: `df -h` — Docker needs at least a few GB free
-4. Check gateway is up before creating sandboxes: `nemoclaw gateway status`
+2. Ensure your user is in the `docker` group: `groups $USER`
+3. Check available disk space: `df -h`
+4. Check gateway is up: `openshell status`
 
-### SSH connection refused to Mac or Pi
+### SSH connection refused to Mac
 
-**Symptom**: Phase 0 SSH tests fail for Mac or Pi.
+**Symptom**: Phase 0 SSH tests fail for Mac.
 
 **Fix**:
 1. Verify the IP in `.env` is correct: `ping ${MAC_IP}`
-2. Ensure SSH is enabled on the Mac: System Settings → General → Sharing → Remote Login
-3. Ensure SSH is enabled on the Pi: `sudo raspi-config` → Interface Options → SSH
-4. Test manually: `ssh ${SSH_USER}@${MAC_IP}` — if it prompts for a password, consider setting up key-based auth
-
-### Tailscale peer not reachable
-
-**Symptom**: Tailscale IP is unreachable from another device.
-
-**Fix**:
-1. Check Tailscale status on the target machine: `tailscale status`
-2. Ensure the machine is logged into the same Tailnet: `tailscale up`
-3. Check the Tailscale admin console for device approval if your network requires it
+2. Ensure SSH is enabled: System Settings → General → Sharing → Remote Login
+3. Test manually: `ssh ${SSH_USER}@${MAC_IP}`

@@ -20,6 +20,7 @@ from fabric import Connection
 
 from ..helpers import poll_until_ready, run_remote
 from ..models import CommandResult
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Behavioral tests — gateway startup and status
@@ -174,4 +175,99 @@ class TestGatewayNegative:
             "(all interfaces), exposing the control plane to the LAN.\n"
             f"Current ss output:\n{stdout}\n"
             "Fix: configure the gateway to bind only to 127.0.0.1:8080."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Contract tests — device authentication
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.phase1
+@pytest.mark.contract
+class TestDeviceAuth:
+    """Layer A: Gateway device authentication is enabled and tokens are not leaked.
+
+    Device authentication ensures that only approved devices can interact with
+    the OpenClaw gateway.  The auth mode should be ``token`` or ``device``,
+    and the actual token value must never appear in plaintext in gateway logs.
+    """
+
+    def test_device_auth_enabled(self, spark_ssh: Connection) -> None:
+        """The gateway auth mode is set to 'token' or 'device'.
+
+        Reads the gateway auth configuration from the OpenClaw config inside
+        the nemoclaw-main sandbox.  The auth mode must be one of the secure
+        options; ``none`` or ``open`` would allow unauthenticated access to the
+        gateway control plane.
+        """
+        result: CommandResult = run_remote(
+            spark_ssh,
+            "docker exec nemoclaw-main sh -c "
+            "'cat ~/.openclaw/openclaw.json 2>/dev/null || echo {}'",
+            timeout=15,
+        )
+        config_output = result.stdout.strip().lower()
+
+        secure_modes = {"token", "device"}
+        has_secure_mode = any(mode in config_output for mode in secure_modes)
+
+        assert has_secure_mode, (
+            "Gateway auth mode is not set to 'token' or 'device' in the "
+            "OpenClaw configuration. Without device authentication, any client "
+            "that can reach the gateway port can interact with it. "
+            f"Config content (first 500 chars): {result.stdout[:500]!r}. "
+            "Fix: set gateway.auth.mode to 'token' in openclaw.json."
+        )
+
+    def test_gateway_token_not_in_logs(
+        self, spark_ssh: Connection, test_settings: TestSettings
+    ) -> None:
+        """The device auth token value does not appear in plaintext in gateway logs.
+
+        Extracts the gateway auth token from the OpenClaw config and then scans
+        the gateway log file for the literal token value.  A match means the
+        gateway is logging its own auth token, which exposes it to anyone with
+        log read access.
+
+        The test is skipped if the token cannot be extracted from the config
+        (e.g. because the config format has changed or the token is not a
+        simple string).
+        """
+        # Extract the auth token from the config
+        token_result: CommandResult = run_remote(
+            spark_ssh,
+            "docker exec nemoclaw-main sh -c 'cat ~/.openclaw/openclaw.json 2>/dev/null'",
+            timeout=15,
+        )
+
+        import json
+
+        try:
+            config = json.loads(token_result.stdout)
+            token = config.get("gateway", {}).get("auth", {}).get("token", "")
+        except (json.JSONDecodeError, AttributeError):
+            token = ""
+
+        if not token or len(token) < 8:
+            pytest.skip(
+                "Could not extract a gateway auth token from openclaw.json. "
+                "The token may be managed externally or use a different format."
+            )
+
+        # Scan gateway logs for the raw token
+        log_result: CommandResult = run_remote(
+            spark_ssh,
+            "docker exec nemoclaw-main sh -c "
+            "'tail -n 2000 /tmp/gateway.log 2>/dev/null || echo \"\"'",
+            timeout=20,
+        )
+        log_content = log_result.stdout
+
+        redacted_token = token[:4] + "..." + token[-4:]
+        assert token not in log_content, (
+            f"Gateway auth token ({redacted_token}) found in plaintext in "
+            "gateway logs. This exposes the token to anyone with log access. "
+            "Fix: configure the gateway logger to redact auth tokens, or use "
+            "a token rotation mechanism."
         )

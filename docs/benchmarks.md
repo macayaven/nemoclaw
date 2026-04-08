@@ -20,7 +20,7 @@ Run 1 includes cold start for models that weren't loaded.
 
 **Summary:** ~30s cold start, then **~2.5s / 17-18 tok/s** when warm. `OLLAMA_KEEP_ALIVE=-1` prevents unloading.
 
-### Qwen3 Coder Next Q4_K_M (DGX Spark, direct Ollama)
+### Qwen3 Coder Next Q4_K_M (DGX Spark, direct Ollama) — *historical, model retired*
 
 | Run | Latency | Tokens | Tok/s | Notes |
 |-----|---------|--------|-------|-------|
@@ -28,9 +28,9 @@ Run 1 includes cold start for models that weren't loaded.
 | 2 | 15,244 ms | 39 | 2.6 | First real inference after load |
 | 3 | 1,182 ms | 45 | 38.1 | Warm |
 
-**Summary:** Qwen Coder is faster per-token (~38 tok/s warm) but needs ~15s for first inference after loading. Cannot coexist with Nemotron in GPU memory (94GB + 51GB > 128GB).
+**Summary:** Historical benchmark. This model has been retired from the deployment in favor of Nemotron 120B as the sole Spark model, with Gemma 4 27B on the Mac for fast inference.
 
-### Qwen3 8B (Mac Studio M4 Max, via Tailscale)
+### Gemma4 27B (Mac Studio M4 Max, via Tailscale)
 
 | Run | Latency | Tokens | Tok/s | Notes |
 |-----|---------|--------|-------|-------|
@@ -59,7 +59,7 @@ Run 1 includes cold start for models that weren't loaded.
 | Direct Ollama (localhost:11434) | ~2,500 ms | baseline |
 | inference.local (sandbox → proxy → Ollama) | ~3,300 ms | +800 ms (~32%) |
 | Mac via Tailscale (100.x.x.x:11435) | ~950 ms | N/A (different model) |
-| LiteLLM on Pi → Spark | TBD | Adds ~50-100ms routing |
+| Direct Mac Ollama (LAN) | ~950 ms | N/A (different model/machine) |
 
 The sandbox overhead (~800ms) comes from:
 - SSH tunnel from host to sandbox container
@@ -75,18 +75,16 @@ The sandbox overhead (~800ms) comes from:
 |-------|------|-----------|---------------|
 | nemotron-3-super:120b | 94 GB | 100% GPU | 262,144 tokens |
 
-The DGX Spark has 128GB UMA. With Nemotron loaded (94GB), ~34GB remains for system and other processes. Qwen3 Coder (51GB) cannot coexist — loading it unloads Nemotron.
+The DGX Spark has 128GB UMA. With Nemotron loaded (94GB), ~34GB remains for system and other processes.
 
 ---
 
 ## Key Takeaways
 
-1. **Cold start is the biggest bottleneck** — 30s for Nemotron, 15s for Qwen Coder, 6s for Qwen3 8B. Use `OLLAMA_KEEP_ALIVE=-1` to prevent unloading.
+1. **Cold start is the biggest bottleneck** — 30s for Nemotron, 6s for Gemma4 27B. Use `OLLAMA_KEEP_ALIVE=-1` to prevent unloading.
 
-2. **Warm inference is fast** — 17-18 tok/s for 120B parameters is excellent for local inference. Qwen3 8B on M4 Max achieves 50+ tok/s.
+2. **Warm inference is fast** — 17-18 tok/s for 120B parameters is excellent for local inference. Gemma4 27B on M4 Max achieves 50+ tok/s.
 
 3. **Sandbox overhead is acceptable** — 800ms extra for the full security chain (isolation, policy enforcement, credential injection) is a reasonable price for the security guarantees.
-
-4. **Model switching has a cost** — switching between Nemotron and Qwen Coder means unloading one (~94GB) and loading the other (~51GB). Budget 30-60s for the switch.
 
 5. **Tailscale adds negligible latency** — <10ms on LAN. The Mac's fast response time (950ms) makes it viable for interactive use even over the network.

@@ -1,6 +1,6 @@
 # OpenClaw Conceptual Guide: Understanding Your AI Agent System
 
-*Written for NemoClaw users on DGX Spark + Mac Studio + Raspberry Pi. This is a mental model guide, not a command reference — every section explains what something IS and why it exists.*
+*Written for NemoClaw users on DGX Spark + Mac Studio. This is a mental model guide, not a command reference — every section explains what something IS and why it exists.*
 
 ---
 
@@ -53,7 +53,7 @@ Why this matters: you stay in control of what your agent reaches. The agent cann
 
 All sandboxes call `https://inference.local/v1` for inference. This is not a real hostname — it is a virtual endpoint intercepted by the OpenShell gateway's TLS proxy. The gateway looks up the currently active provider, injects the real credentials, and forwards the request. The sandbox never sees the real API key or endpoint.
 
-Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on the Mac, Claude via Anthropic's API, or any other provider in about five seconds — without restarting any sandbox. The inference source is hot-swappable.
+Why this matters: you can switch between Nemotron 120B on the Spark, Gemma 4 27B on the Mac, Claude via Anthropic's API, or any other provider in about five seconds — without restarting any sandbox. The inference source is hot-swappable.
 
 ---
 
@@ -70,6 +70,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **In your deployment:** The gateway runs inside the `nemoclaw-main` sandbox on the Spark. It is exposed to the outside world on port 18789. Tailscale Serve puts HTTPS in front of it so you can reach it at `https://spark-caeb.tail48bab7.ts.net/`.
 
 **Practical examples:**
+
 - When you open the browser UI and type a message, that message goes to the gateway via WebSocket.
 - When your Mac companion app connects, it connects to this same gateway via WebSocket over Tailscale.
 
@@ -86,6 +87,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **In your deployment:** You have one agent (`main`) using `nemotron-3-super:120b` via `inference.local`. You could add a second agent bound to a different channel and configured to always use the fast Mac model for a lightweight personal assistant use case.
 
 **Practical examples:**
+
 - `openclaw agents add coding-agent --model nemotron-3-super:120b` creates a specialized coding agent.
 - `openclaw agents bind coding-agent --channel telegram --target @mycodingbot` routes Telegram messages from that bot to the coding agent specifically.
 
@@ -102,6 +104,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **In your deployment:** When you open the browser UI, you start or continue a session. Each browser tab that opens a chat creates its own session. If you connect via the OpenClaw TUI inside the sandbox, that is yet another session.
 
 **Practical examples:**
+
 - `openclaw sessions` lists all sessions across all agents.
 - Typing `/new` in any chat interface starts a fresh session, clearing the conversation context. Use this when you want to switch topics without the agent carrying over old context.
 - `openclaw sessions prune` removes old sessions to free up storage.
@@ -119,6 +122,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **Relationship to other concepts:** Memory belongs to an agent and persists across sessions. Sessions are the short-term working context; memory is the long-term knowledge base. Skills (like file management) can interact with the agent's workspace to add new content to memory.
 
 **Practical examples:**
+
 - `openclaw memory search "database schema"` searches all memory files for information about your database schema.
 - `openclaw memory index` rebuilds the search index after you manually add files to the memory directory.
 - You can add a file like `PREFERENCES.md` to the memory directory with your coding style preferences, and the agent will reference it automatically.
@@ -136,12 +140,14 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **Relationship to other concepts:** Skills belong to an agent. Enabling a skill often requires both an OpenClaw skill configuration AND an OpenShell policy preset — the former tells the agent it can use the capability, the latter tells the sandbox to allow the network access the skill needs. Plugins can add new skills to the system.
 
 **Common skills in your deployment:**
+
 - GitHub integration (requires `nemoclaw nemoclaw-main policy-add github`)
 - Web browsing (uses the Browser subsystem)
 - Code execution (uses sandbox shell access)
 - File management (reads/writes within the sandbox workspace)
 
 **Practical examples:**
+
 - `openclaw skills list` shows every skill OpenClaw knows about and whether it is enabled.
 - `openclaw skills check` shows which enabled skills are ready and which are missing something (binary not found, API key not set, network policy missing).
 
@@ -160,6 +166,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **Relationship to other concepts:** Channels are bound to agents (`openclaw agents bind <agent> --channel <type> --target <id>`). One agent can be bound to multiple channels. Sessions are scoped by channel — your Telegram conversation and your browser conversation are separate sessions even to the same agent.
 
 **Practical examples:**
+
 - `openclaw channels add telegram --token BOT_TOKEN` registers a Telegram bot. After this, messages to that bot route through the gateway.
 - `openclaw channels list` shows every configured channel and which agent it is bound to.
 - Binding the same agent to both Telegram and the web UI means you can switch between them mid-task and the agent has separate sessions for each.
@@ -175,6 +182,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **How they work:** Nodes connect to the gateway via WebSocket and must complete a device pairing flow before the gateway accepts them (see Devices and Pairing below). Once paired, the gateway can delegate node capabilities to the agent as tools. The Mac node host is installed as a macOS launchd service (`ai.openclaw.node`) so it starts automatically on boot.
 
 **Mac node capabilities:**
+
 - Screen capture (take a screenshot of your Mac's display)
 - Camera (access the webcam)
 - Canvas (draw or annotate)
@@ -184,6 +192,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 - Microphone and voice wake
 
 **iOS node capabilities (if you install the iOS app):**
+
 - Camera (photo and video)
 - Location (GPS coordinates)
 - Voice input
@@ -193,6 +202,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 **In your deployment:** The Mac Studio runs the node host as a launchd service. It connects to the gateway at `https://spark-caeb.tail48bab7.ts.net/` over Tailscale. Once connected, the agent on the Spark can take screenshots of your Mac, run AppleScript, and send notifications.
 
 **Practical examples:**
+
 - `openclaw node status` (run on the Mac) shows whether the node host is running and connected to the gateway.
 - `openclaw nodes list` (run inside the `nemoclaw-main` sandbox) shows all connected and paired nodes.
 - When the agent is helping you with a UI bug, it can call the Mac node's screen capture tool to see what you are seeing.
@@ -203,7 +213,7 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Qwen3 8B on
 
 **What they are:** A model configuration in OpenClaw defines which LLM inference provider to use and which model to request from it. In your deployment, the model configuration inside OpenClaw is layered on top of the inference routing controlled by OpenShell.
 
-**Why they exist:** You might want to use Nemotron 120B for complex reasoning, Qwen3 8B on the Mac for fast replies, or Claude via Anthropic's API for tasks that require frontier capabilities. The models system lets you define and switch between these without reconfiguring the agent itself.
+**Why they exist:** You might want to use Nemotron 120B for complex reasoning, Gemma 4 27B on the Mac for fast replies, or Claude via Anthropic's API for tasks that require frontier capabilities. The models system lets you define and switch between these without reconfiguring the agent itself.
 
 **Two layers of model switching:**
 
@@ -216,9 +226,10 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **In your deployment:** The active inference route is set at the OpenShell level. Currently `local-ollama` with `nemotron-3-super:120b`. Available providers: `local-ollama` (Spark), `local-lmstudio` (Spark, OpenAI-compatible API), `local-lmstudio-anthropic` (Spark, Anthropic-compatible API), `mac-ollama` (Mac Studio).
 
 **Practical examples:**
+
 - `openclaw models status` shows the model the agent is currently configured to use.
 - `openclaw models scan` discovers what models are available at the configured endpoint.
-- `openshell inference set --provider mac-ollama --model qwen3:8b` switches the entire system to the fast Mac model in about 5 seconds, no sandbox restart needed.
+- `openshell inference set --provider mac-ollama --model gemma4:27b` switches the entire system to the fast Mac model in about 5 seconds, no sandbox restart needed.
 
 ---
 
@@ -233,6 +244,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** Cron jobs trigger agent sessions on a schedule. They run through the gateway (so the gateway must be running). The agent processes them using whatever skills and channels are configured. Hooks can fire before and after cron job execution.
 
 **Practical examples:**
+
 - `openclaw cron add "0 9 * * *" "Summarize my GitHub notifications from the past 24 hours and list anything that needs my attention"` — a morning digest at 9am.
 - `openclaw cron add "*/30 * * * *" "Check if the OpenShell gateway is healthy and alert me on Telegram if any sandbox is not Ready"` — a 30-minute health watchdog.
 - `openclaw cron list` shows all scheduled jobs and their next run time.
@@ -252,6 +264,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** Plugins can add new skills, channels, hooks, or commands. They extend every other concept in the system.
 
 **Practical examples:**
+
 - `openclaw plugins list` shows all installed plugins and their version.
 - `openclaw plugins install <name>` installs a plugin from the OpenClaw registry.
 - A plugin might add Slack as a channel type that was not available in the base installation.
@@ -267,6 +280,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **How they work:** Hooks are defined per-agent and registered with the gateway. When an event fires, the gateway runs the matching hooks in order. Hooks can be written as shell scripts or as JavaScript/TypeScript functions depending on the OpenClaw version.
 
 **Common hook patterns:**
+
 - `session-start`: Load relevant memory context when a new session begins.
 - `session-end`: Summarize the session and save key decisions to memory.
 - `pre-tool-call`: Log what tool the agent is about to invoke and with what arguments.
@@ -275,6 +289,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** Hooks fire on agent events and can interact with memory, sessions, and channels. They complement cron jobs — cron is for scheduled triggers, hooks are for event-driven triggers.
 
 **Practical examples:**
+
 - `openclaw hooks list` shows all available hook points and which ones have handlers registered.
 - A `session-memory` hook that runs on `session-start` can automatically search memory for context relevant to the first message and prepend it to the agent's system prompt.
 - A hook on `cron-complete` can push the result of a scheduled job to a Telegram channel.
@@ -292,6 +307,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** The Browser capability is exposed through a Node (your Mac) and enabled as a Skill. The agent can invoke browser tools when the relevant skill is enabled and a node with screen access is connected.
 
 **Practical examples:**
+
 - The agent can browse to a GitHub issue, read all the comments, and summarize the discussion.
 - When you ask "what does this library's API look like?", the agent can navigate to the docs site, pull the relevant page, and extract the signature.
 - The agent can fill out a web form by navigating to it and using browser interaction tools.
@@ -313,6 +329,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **In your deployment:** Your Mac node host was paired during the Mac setup phase. The browser UI uses the gateway token (in the URL hash) as an alternative to device pairing. New browsers or new instances of the iOS app will trigger the pairing flow until approved.
 
 **Practical examples:**
+
 - `openclaw devices list` shows all pending pairing requests and all approved devices.
 - `openclaw devices approve mac-studio-node-id` approves the Mac node host pairing request.
 - The Mac node host will show "pairing required" in its logs until you approve it. After approval, restart the node host.
@@ -328,12 +345,14 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **How it works:** Approvals integrate with the OpenShell TUI (`openshell term`). When an operation requires approval, it appears in the TUI with context about what is being requested and why. You press `A` to approve (for this instance only) or `D` to deny. Session-level approvals can be escalated to permanent policy changes.
 
 **Two levels of approvals:**
+
 - **OpenClaw-level approvals**: The agent itself asks permission before taking a high-impact action defined in its skill configuration.
 - **OpenShell-level approvals**: The sandbox blocks a network request and asks the operator (you) to approve or deny it at the policy level.
 
 **Relationship to other concepts:** Approvals are the operational face of the Security subsystem. They complement network policies (which approve endpoints permanently) with on-the-fly decision-making. Approvals can be configured per-agent — a more trusted agent might have fewer approval requirements.
 
 **Practical examples:**
+
 - When the agent tries to delete a file outside the expected workspace, an approval request fires.
 - When Claude Code inside the `claude-dev` sandbox tries to reach `api.github.com` for the first time, the OpenShell TUI shows an approval prompt.
 - `openclaw approvals list` shows pending approvals waiting for your input.
@@ -351,6 +370,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** Webhooks are a type of inbound channel — they deliver prompts to the agent from external sources. The response from the agent can be delivered back to the webhook caller, to a channel (e.g., Telegram), or stored in memory.
 
 **Practical examples:**
+
 - A GitHub Actions workflow posts to a webhook after tests complete. The agent receives the test summary and posts analysis to your Telegram channel.
 - A monitoring system sends a webhook when CPU usage spikes. The agent runs `nvidia-smi` and `openshell sandbox list` via tool calls and sends you a summary.
 
@@ -387,6 +407,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 **Relationship to other concepts:** Security touches everything — it analyzes agent permissions, skill configurations, channel access controls, device pairing state, and network policies. It is a meta-layer that reasons about the health of the whole configuration.
 
 **Practical examples:**
+
 - `openclaw security audit` performs a basic audit and reports issues.
 - `openclaw security audit --deep` runs a more thorough analysis including network policy coverage and credential exposure.
 - `openclaw security audit --fix` automatically resolves common misconfigurations (world-readable config files, missing authentication, etc.).
@@ -395,11 +416,11 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 
 ### 19. DNS (in NemoClaw context)
 
-**What it is:** In the OpenClaw CLI, the `dns` subsystem manages DNS-SD (Bonjour/mDNS) discovery — how OpenClaw advertises itself on the local network and how it discovers other nodes. At the infrastructure level, your Pi-hole provides local DNS so you can reach services by name instead of IP.
+**What it is:** In the OpenClaw CLI, the `dns` subsystem manages DNS-SD (Bonjour/mDNS) discovery — how OpenClaw advertises itself on the local network and how it discovers other nodes.
 
-**Why it exists:** Discovery automation reduces manual configuration. Instead of entering an IP address to connect the Mac companion app to the gateway, the app can discover the gateway via mDNS. Similarly, the Pi-hole DNS names (`spark.lab`, `mac.lab`, `ai.lab`) mean you do not need to memorize Tailscale IPs.
+**Why it exists:** Discovery automation reduces manual configuration. Instead of entering an IP address to connect the Mac companion app to the gateway, the app can discover the gateway via mDNS. Tailscale also provides MagicDNS for name resolution across the tailnet.
 
-**In your deployment:** Pi-hole on the Raspberry Pi provides three local DNS records: `spark.lab` → Spark's Tailscale IP, `mac.lab` → Mac's Tailscale IP, `ai.lab` → Pi's Tailscale IP. LiteLLM is reachable at `http://ai.lab:4000`. Pi-hole admin is at `http://ai.lab/admin`. These names only resolve if your device uses the Pi as its DNS resolver.
+**In your deployment:** The Mac companion app discovers the Spark gateway via mDNS on the LAN, or via Tailscale MagicDNS when remote.
 
 ---
 
@@ -430,7 +451,7 @@ flowchart TD
     InferenceLocal -->|intercepted by| OpenShell[OpenShell Gateway]
     OpenShell -->|routes to active provider| Models
     Models -->|local default| Ollama["Ollama on Spark\n(Nemotron 120B)"]
-    Models -->|fast option| MacOllama["Ollama on Mac\n(Qwen3 8B)"]
+    Models -->|fast option| MacOllama["Ollama on Mac\n(Gemma 4 27B)"]
     Models -->|opt-in cloud| Cloud["Anthropic / OpenAI\n/ Google"]
 
     Gateway -->|blocked request| Approvals
@@ -443,6 +464,8 @@ flowchart TD
     Security -->|audits| Gateway
     Secrets -->|injected into| InferenceLocal
 ```
+
+
 
 ---
 
@@ -494,7 +517,7 @@ Two paths:
 At the OpenShell level (fastest, affects all sandboxes):
 
 ```bash
-openshell inference set --provider mac-ollama --model qwen3:8b
+openshell inference set --provider mac-ollama --model gemma4:27b
 ```
 
 Available providers: `local-ollama` (Spark, 120B default), `mac-ollama` (Mac, 8B fast), `local-lmstudio` (Spark, OpenAI-compatible), `local-lmstudio-anthropic` (Spark, Anthropic-compatible).
@@ -506,6 +529,7 @@ The switch takes about 5 seconds. No sandbox restart needed.
 ### How do I let the agent browse the web?
 
 Two things need to be true:
+
 1. The Mac node host must be running and connected (`openclaw node status` on the Mac).
 2. The browser skill must be enabled for the agent (`openclaw skills enable browser` inside the sandbox).
 
@@ -515,7 +539,7 @@ Once both are true, the agent can use browser tools: navigate to a URL, extract 
 
 ### How do I connect my phone?
 
-**Browser access (simple):** On any device on your Tailscale network, open `https://spark-caeb.tail48bab7.ts.net/` and authenticate with the token in the URL: `https://spark-caeb.tail48bab7.ts.net/#token=<your-token>`.
+**Browser access (simple):** On any device on your Tailscale network, open `https://spark-caeb.tail48bab7.ts.net/` and authenticate with the token in the URL: `ib.tail48bab7.ts.net/#token=<your-token>`.
 
 **iOS app (richer):** Install the OpenClaw iOS app via TestFlight. Connect it to `https://spark-caeb.tail48bab7.ts.net/` with your gateway token. It will create a pairing request — approve it inside the sandbox with `openclaw devices approve <id>`.
 
@@ -562,20 +586,29 @@ The most powerful restriction is at the OpenShell level — network policies are
 
 ---
 
-### How do I use the LiteLLM proxy from my own scripts?
+### How do I call inference from my own scripts?
 
-The Pi's LiteLLM proxy at `http://ai.lab:4000/v1` (or `http://100.85.6.21:4000/v1`) accepts OpenAI-compatible requests and routes by model name:
+You can hit Ollama directly on either machine using the OpenAI-compatible API:
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://100.85.6.21:4000/v1", api_key="unused")
+
+# Spark — heavy model (Nemotron 120B)
+client = OpenAI(base_url="http://spark-caeb.local:11434/v1", api_key="unused")
 response = client.chat.completions.create(
-    model="nemotron-3-super:120b",   # or "qwen3:8b" for Mac
+    model="nemotron-3-super:120b",
+    messages=[{"role": "user", "content": "your prompt here"}],
+)
+
+# Mac — fast model (Gemma 4 27B)
+client = OpenAI(base_url="http://mac-studio.local:11434/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="gemma4:27b",
     messages=[{"role": "user", "content": "your prompt here"}],
 )
 ```
 
-This works from any machine on your Tailscale network and routes to the right inference server automatically.
+This works from any machine on your LAN or Tailscale network.
 
 ---
 
@@ -594,25 +627,27 @@ The pipeline breaks the task into phases: research (OpenClaw), implementation (C
 
 ## Concept Relationships at a Glance
 
-| Concept | Belongs to | Contains / Uses | Requires |
-|---------|-----------|-----------------|----------|
-| Gateway | OpenClaw | Agents, Channels, Nodes | OpenShell sandbox to run in |
-| Agent | Gateway | Sessions, Memory, Skills | A configured Model |
-| Session | Agent | Message history | An Agent |
-| Memory | Agent | Knowledge files | Agent workspace |
-| Skills | Agent | Tools and integrations | Policy presets (for network access) |
-| Channels | Gateway | Sessions (one per user/peer) | Agent binding |
-| Nodes | Gateway | Hardware capabilities | Device pairing approval |
-| Models | Agent / OpenShell | Inference provider config | OpenShell provider registration |
-| Cron Jobs | Gateway | Agent sessions (scheduled) | Gateway to be running |
-| Plugins | OpenClaw | Skills, Channels, Hooks | Compatible OpenClaw version |
-| Hooks | Agent | Event handlers | Hook scripts or functions |
-| Browser | Node (Mac) | Chromium instance | Node connected + skill enabled |
-| Devices | Gateway | Pairing requests + approved list | Operator approval |
-| Approvals | Gateway / OpenShell | Pending decisions | TUI monitoring (`openshell term`) |
-| Webhooks | Gateway | Inbound HTTP triggers | External service integration |
-| Security | OpenClaw | Audit reports | Nothing — runs on demand |
-| Secrets | Gateway | Credential vault | Initial credential registration |
+
+| Concept   | Belongs to          | Contains / Uses                  | Requires                            |
+| --------- | ------------------- | -------------------------------- | ----------------------------------- |
+| Gateway   | OpenClaw            | Agents, Channels, Nodes          | OpenShell sandbox to run in         |
+| Agent     | Gateway             | Sessions, Memory, Skills         | A configured Model                  |
+| Session   | Agent               | Message history                  | An Agent                            |
+| Memory    | Agent               | Knowledge files                  | Agent workspace                     |
+| Skills    | Agent               | Tools and integrations           | Policy presets (for network access) |
+| Channels  | Gateway             | Sessions (one per user/peer)     | Agent binding                       |
+| Nodes     | Gateway             | Hardware capabilities            | Device pairing approval             |
+| Models    | Agent / OpenShell   | Inference provider config        | OpenShell provider registration     |
+| Cron Jobs | Gateway             | Agent sessions (scheduled)       | Gateway to be running               |
+| Plugins   | OpenClaw            | Skills, Channels, Hooks          | Compatible OpenClaw version         |
+| Hooks     | Agent               | Event handlers                   | Hook scripts or functions           |
+| Browser   | Node (Mac)          | Chromium instance                | Node connected + skill enabled      |
+| Devices   | Gateway             | Pairing requests + approved list | Operator approval                   |
+| Approvals | Gateway / OpenShell | Pending decisions                | TUI monitoring (`openshell term`)   |
+| Webhooks  | Gateway             | Inbound HTTP triggers            | External service integration        |
+| Security  | OpenClaw            | Audit reports                    | Nothing — runs on demand            |
+| Secrets   | Gateway             | Credential vault                 | Initial credential registration     |
+
 
 ---
 

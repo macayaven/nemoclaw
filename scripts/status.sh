@@ -6,7 +6,6 @@ export PATH="$HOME/workspace/nemoclaw/openshell-env/bin:$HOME/workspace/nemoclaw
 
 SPARK_IP="100.93.220.104"
 MAC_IP="100.116.228.36"
-PI_IP="100.85.6.21"
 
 G='\033[0;32m' R='\033[0;31m' Y='\033[1;33m' C='\033[0;36m' N='\033[0m'
 ok() { echo -e "  ${G}OK${N}  $1"; }
@@ -124,37 +123,12 @@ else
     warn "Disconnected"
 fi
 
-# --- PI ---
-echo -e "\n${Y}Raspberry Pi ($PI_IP)${N}"
-
-echo -e "\n  LiteLLM (:4000):"
-if curl -s --max-time 5 http://$PI_IP:4000/health > /dev/null 2>&1; then
-    ok "Running"
-else
-    fail "Not responding"
-fi
-
-echo -e "\n  Uptime Kuma (:3001):"
-if curl -s --max-time 5 http://$PI_IP:3001 > /dev/null 2>&1; then
-    ok "Running"
-else
-    warn "Not responding"
-fi
-
-echo -e "\n  Tailscale:"
-if ping -c 1 -W 2 $PI_IP > /dev/null 2>&1; then
-    ok "Reachable"
-else
-    fail "Unreachable"
-fi
-
 # --- SUMMARY ---
 echo -e "\n${C}========================================${N}"
 echo -e "${C}  Quick Actions${N}"
 echo -e "${C}========================================${N}"
-echo "  Chat:        https://spark-caeb.tail48bab7.ts.net/"
-echo "  Monitor:     openshell term"
+echo "  Chat:         https://spark-caeb.tail48bab7.ts.net/"
+echo "  Monitor:      openshell term"
 echo "  Switch model: openshell inference set --provider <name> --model <model>"
-echo "  All models:  curl http://$PI_IP:4000/v1/models"
-echo "  Health:      http://$PI_IP:3001"
+echo "  Health:       openshell status"
 echo ""
