@@ -38,3 +38,5 @@ Thumbs.db
 # Virtual environments
 .vscode/
 image.png
+# Disaster recovery snapshots
+snapshots/

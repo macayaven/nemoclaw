@@ -1549,7 +1549,63 @@ openclaw channels add discord --token YOUR_DISCORD_BOT_TOKEN
 # Mention it or DM it to chat with the agent
 ```
 
-### Recipe 38c: What Channels Are NOT For
+### Recipe 38c: Add a WhatsApp Channel
+
+WhatsApp integration lets you message your NemoClaw agent from WhatsApp on your phone. Uses the WhatsApp Web bridge inside the sandbox.
+
+**Using the Makefile (recommended):**
+
+```bash
+# 1. Add WhatsApp network policy to allow WhatsApp servers
+make policy-whatsapp
+
+# 2. Run the WhatsApp setup wizard (will show a QR code)
+make whatsapp-setup
+
+# 3. Scan the QR code with WhatsApp on your phone
+#    (WhatsApp → Settings → Linked Devices → Link a Device)
+
+# 4. Check channel status
+make channels-status
+# Expected: whatsapp channel shows "connected"
+```
+
+**Manual steps (inside sandbox):**
+
+```bash
+openshell sandbox connect nemoclaw-main
+openclaw channels add whatsapp
+# Scan the QR code displayed in terminal with your phone
+```
+
+**What you can do through WhatsApp:**
+- Send text messages to the agent (the agent responds using the active model)
+- Send voice messages (if speech-to-text is configured)
+- The agent can send images and formatted text back
+
+**Troubleshooting:**
+- If the QR code expires, run `make whatsapp-setup` again
+- WhatsApp sessions expire after ~14 days of inactivity; re-scan to reconnect
+- Ensure the nemoclaw-main sandbox has the `whatsapp` network policy applied
+
+### Recipe 38d: Channel Setup via Makefile
+
+All channel operations have corresponding `make` targets for convenience:
+
+```bash
+# Telegram
+make policy-telegram     # Add network policy for Telegram servers
+make telegram-setup      # Add Telegram channel to OpenClaw
+
+# WhatsApp
+make policy-whatsapp     # Add network policy for WhatsApp servers
+make whatsapp-setup      # Add WhatsApp channel to OpenClaw
+
+# Status
+make channels-status     # Show all channel statuses
+```
+
+### Recipe 38e: What Channels Are NOT For
 
 Channels are for **you** to reach the agent. They are NOT for:
 - Agent-to-agent communication (use the Orchestrator for that)

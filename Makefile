@@ -77,15 +77,31 @@ setup: ## Full automated setup: gateway + providers + sandboxes + config + UI (z
 			--credential OPENAI_API_KEY=not-needed \
 			--config OPENAI_BASE_URL=http://$(MAC_IP):11435/v1 2>&1 | tail -1
 	@echo ""
+	@echo "=== Step 2b/7: Registering cloud API providers (credential isolation) ==="
+	@$(OS_ENV) && \
+		openshell provider create --name anthropic-cloud --type openai \
+			--credential OPENAI_API_KEY=$${ANTHROPIC_API_KEY} \
+			--config OPENAI_BASE_URL=https://api.anthropic.com/v1 2>&1 | tail -1; \
+		openshell provider create --name gemini-cloud --type openai \
+			--credential OPENAI_API_KEY=$${GEMINI_API_KEY} \
+			--config OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta 2>&1 | tail -1
+	@echo "Cloud providers registered. Credentials held at gateway level."
+	@echo ""
 	@echo "=== Step 3/7: Setting inference route ==="
 	@$(OS_ENV) && openshell inference set --provider local-ollama --model nemotron-3-super:120b 2>&1 | tail -1
 	@echo ""
 	@echo "=== Step 4/7: Creating sandboxes ==="
 	@$(OS_ENV) && \
 		openshell sandbox create --keep --forward 18789 --name nemoclaw-main --from openclaw -- bash 2>&1 | tail -3; \
-		openshell sandbox create --keep --name claude-dev --auto-providers -- claude 2>&1 | tail -1; \
-		openshell sandbox create --keep --name codex-dev --auto-providers -- bash 2>&1 | tail -1; \
-		openshell sandbox create --keep --name gemini-dev --auto-providers -- bash 2>&1 | tail -1
+		openshell sandbox create --keep --name claude-dev -- claude 2>&1 | tail -1; \
+		openshell sandbox create --keep --name codex-dev -- bash 2>&1 | tail -1; \
+		openshell sandbox create --keep --name gemini-dev -- bash 2>&1 | tail -1
+	@echo ""
+	@echo "=== Step 4b/7: Configuring sandbox inference routes ==="
+	@$(OS_ENV) && \
+		openshell inference set --sandbox claude-dev --provider anthropic-cloud --model claude-sonnet-4-20250514 2>&1 | tail -1; \
+		openshell inference set --sandbox codex-dev --provider local-ollama --model nemotron-3-super:120b 2>&1 | tail -1; \
+		openshell inference set --sandbox gemini-dev --provider gemini-cloud --model gemini-2.5-pro 2>&1 | tail -1
 	@echo ""
 	@echo "=== Step 5/7: Writing OpenClaw config (skips interactive wizard) ==="
 	@$(OS_ENV) && $(SSH_SANDBOX) 'mkdir -p ~/.openclaw/agents/main/sessions ~/.openclaw/workspace && \
@@ -401,6 +417,40 @@ lint: ## Run all linting checks
 fix: ## Auto-fix lint issues
 	@cd tests && uv run ruff check . --fix && uv run ruff format . && uv run isort .
 
+.PHONY: security-audit
+security-audit: ## Run all security posture checks in one shot
+	@echo ""
+	@echo "=== NemoClaw Security Audit ==="
+	@echo "=== $$(date '+%Y-%m-%d %H:%M:%S') ==="
+	@echo ""
+	@echo "--- 1. OpenClaw Config Integrity (Gap 9) ---"
+	@cd tests && uv run pytest phase4_agents/test_openclaw_integrity.py -v --tb=short 2>&1; echo ""
+	@echo "--- 2. Sandbox Hardening (Gap 2) ---"
+	@cd tests && uv run pytest phase4_agents/test_sandbox_hardening.py -v --tb=short 2>&1; echo ""
+	@echo "--- 3. Network Policy (Gap 3) ---"
+	@cd tests && uv run pytest phase4_agents/test_network_policy.py -v --tb=short 2>&1; echo ""
+	@echo "--- 4. Secret Hygiene ---"
+	@cd tests && uv run pytest phase4_agents/test_secret_hygiene.py -v --tb=short 2>&1; echo ""
+	@echo "--- 5. Sandbox Isolation ---"
+	@cd tests && uv run pytest phase4_agents/test_sandbox_isolation.py -v --tb=short 2>&1; echo ""
+	@echo "--- 6. SSRF Protection (Gap 11) ---"
+	@cd tests && uv run pytest phase4_agents/test_ssrf_protection.py -v --tb=short 2>&1; echo ""
+	@echo "--- 7. Device Auth (Gap 5) ---"
+	@cd tests && uv run pytest phase1_core/test_gateway.py::TestDeviceAuth -v --tb=short 2>&1; echo ""
+	@echo "--- 8. Credential Routing Audit ---"
+	@$(MAKE) --no-print-directory secret-audit 2>&1; echo ""
+	@echo ""
+	@echo "=== Audit Complete ==="
+
+.PHONY: secret-audit
+secret-audit: ## Check no API keys are visible inside sandboxes
+	@echo "Checking sandbox environments for leaked credentials..."
+	@for sb in claude-dev codex-dev gemini-dev; do \
+		echo "  $$sb:"; \
+		$(OS_ENV) && openshell sandbox connect $$sb -- env 2>/dev/null | grep -iE "(api.key|api_key|secret|token)" && \
+			echo "    WARNING: Credentials visible!" || echo "    OK — no credentials in env"; \
+	done
+
 # ===========================================================================
 # Chat (quick inference)
 # ===========================================================================
@@ -442,12 +492,129 @@ update-litellm: ## Update LiteLLM on Pi
 		echo "LiteLLM updated on Pi"
 
 .PHONY: versions
-versions: ## Show all component versions
+versions: ## Show all component versions and save to versions.lock
 	@echo "Ollama:    $$(ollama --version 2>/dev/null || echo 'not found')"
 	@echo "LM Studio: $$(lms --version 2>/dev/null || echo 'not found')"
 	@echo "OpenShell: $$($(OS_ENV) && openshell --version 2>/dev/null || echo 'not found')"
 	@echo "NemoClaw:  $$(nemoclaw --version 2>/dev/null || echo 'not found')"
 	@echo "Node.js:   $$(node --version 2>/dev/null || echo 'not found')"
+	@echo "Docker:    $$(docker --version 2>/dev/null || echo 'not found')"
+	@echo ""
+	@echo "Writing versions.lock..."
+	@echo "# NemoClaw Version Lock — $$(date -u +%Y-%m-%dT%H:%M:%SZ)" > versions.lock
+	@echo "ollama=$$(ollama --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo 'unknown')" >> versions.lock
+	@echo "openshell=$$($(OS_ENV) && openshell --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo 'unknown')" >> versions.lock
+	@echo "nemoclaw=$$(nemoclaw --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo 'unknown')" >> versions.lock
+	@echo "node=$$(node --version 2>/dev/null | tr -d 'v' || echo 'unknown')" >> versions.lock
+	@echo "docker=$$(docker --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || echo 'unknown')" >> versions.lock
+	@echo "Saved to versions.lock"
+
+# ===========================================================================
+# Messaging Channels
+# ===========================================================================
+
+.PHONY: telegram-setup
+telegram-setup: ## Configure Telegram bot channel in OpenClaw
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+		openclaw channels add telegram && \
+		echo "Telegram channel added. Send /start to your bot to verify."'
+
+.PHONY: whatsapp-setup
+whatsapp-setup: ## Configure WhatsApp channel in OpenClaw (requires QR scan)
+	@$(OS_ENV) && $(SSH_SANDBOX) '\
+		openclaw channels add whatsapp && \
+		echo "WhatsApp channel added. Scan the QR code with your phone."'
+
+.PHONY: channels-status
+channels-status: ## Show status of all messaging channels
+	@$(OS_ENV) && $(SSH_SANDBOX) 'openclaw channels list 2>&1'
+
+.PHONY: policy-telegram
+policy-telegram: ## Add Telegram network policy to nemoclaw-main sandbox
+	@$(OS_ENV) && openshell sandbox policy-add nemoclaw-main telegram 2>&1 | tail -1
+
+.PHONY: policy-whatsapp
+policy-whatsapp: ## Add WhatsApp network policy to nemoclaw-main sandbox
+	@$(OS_ENV) && openshell sandbox policy-add nemoclaw-main whatsapp 2>&1 | tail -1
+
+# ===========================================================================
+# End-to-End Tests
+# ===========================================================================
+
+.PHONY: e2e
+e2e: ## Run scriptable E2E tests (basic chat, delegation)
+	@echo "=== E2E Test Suite (Automated Subset) ==="
+	@echo ""
+	@echo "--- E2E-1: Basic Chat ---"
+	@curl -sf http://localhost:11434/v1/chat/completions \
+		-H "Content-Type: application/json" \
+		-d '{"model":"nemotron-3-super:120b","messages":[{"role":"user","content":"What GPU are you running on?"}],"max_tokens":100}' | \
+		python3 -c "import json,sys; r=json.load(sys.stdin); print('PASS' if r['choices'][0]['message']['content'] else 'FAIL')"
+	@echo ""
+	@echo "--- E2E-5: Inter-Agent Delegation ---"
+	@$(MAKE) --no-print-directory delegate AGENT=openclaw PROMPT="Say hello in one sentence" 2>&1 | \
+		python3 -c "import sys; out=sys.stdin.read(); print('PASS' if len(out.strip()) > 0 else 'FAIL')"
+	@echo ""
+	@echo "=== E2E Complete ==="
+
+# ===========================================================================
+# Disaster Recovery
+# ===========================================================================
+
+.PHONY: snapshot
+snapshot: ## Save full system state for disaster recovery
+	@echo "=== Creating NemoClaw Snapshot ==="
+	@mkdir -p snapshots
+	@SNAP="snapshots/nemoclaw-$$(date +%Y%m%d-%H%M%S)" && mkdir -p $$SNAP && \
+		echo "Saving provider config..." && \
+		$(OS_ENV) && openshell provider list > $$SNAP/providers.txt 2>&1 && \
+		echo "Saving inference route..." && \
+		openshell inference get > $$SNAP/inference-route.txt 2>&1 && \
+		echo "Saving sandbox list..." && \
+		openshell sandbox list > $$SNAP/sandboxes.txt 2>&1 && \
+		echo "Saving versions..." && \
+		$(MAKE) --no-print-directory versions > $$SNAP/versions.txt 2>&1 && \
+		echo "Saving OpenClaw config..." && \
+		$(SSH_SANDBOX) 'cat ~/.openclaw/openclaw.json 2>/dev/null' > $$SNAP/openclaw.json 2>&1 && \
+		cp tests/.env $$SNAP/tests-env.bak 2>/dev/null || true && \
+		echo "Snapshot saved to $$SNAP"
+
+.PHONY: snapshot-list
+snapshot-list: ## List available snapshots
+	@ls -1d snapshots/nemoclaw-* 2>/dev/null || echo "No snapshots found. Run: make snapshot"
+
+# ===========================================================================
+# NemoClaw CLI
+# ===========================================================================
+
+.PHONY: nemoclaw-sync
+nemoclaw-sync: ## Validate nemoclaw CLI state matches Makefile config
+	@echo "Comparing nemoclaw CLI state with Makefile config..."
+	@if [ -f ~/.nemoclaw/sandboxes.json ]; then \
+		echo "  nemoclaw sandboxes.json exists"; \
+		echo "  Expected sandboxes: nemoclaw-main, claude-dev, codex-dev, gemini-dev"; \
+		cat ~/.nemoclaw/sandboxes.json | python3 -c "import json,sys; \
+			data=json.load(sys.stdin); \
+			names=set(s.get('name','') for s in data if isinstance(data, list)) if isinstance(data, list) else set(data.keys()); \
+			expected={'nemoclaw-main','claude-dev','codex-dev','gemini-dev'}; \
+			missing=expected-names; extra=names-expected; \
+			print(f'  Missing: {missing}') if missing else None; \
+			print(f'  Extra: {extra}') if extra else None; \
+			print('  OK — in sync') if not missing and not extra else print('  DRIFT detected')"; \
+	else \
+		echo "  ~/.nemoclaw/sandboxes.json not found (nemoclaw CLI not used — this is expected)"; \
+	fi
+
+.PHONY: onboard-nemoclaw
+onboard-nemoclaw: ## Run official nemoclaw onboard (hardened blueprint defaults)
+	@echo "Running official NemoClaw onboard (blueprint with security defaults)..."
+	@nemoclaw onboard
+	@echo "Onboard complete. Run 'make post-onboard' to finish custom setup."
+
+.PHONY: verify-blueprint
+verify-blueprint: ## Compare running config against official NemoClaw blueprint
+	@echo "Checking NemoClaw blueprint status..."
+	@nemoclaw status 2>&1 || echo "nemoclaw CLI not installed — run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
 
 # ===========================================================================
 # Git & CI
@@ -472,7 +639,7 @@ help: ## Show this help
 	@echo "NemoClaw — Multi-Machine AI Deployment"
 	@echo "======================================="
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Examples:"
