@@ -11,6 +11,8 @@ Provides:
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fabric import Connection
 
@@ -38,7 +40,31 @@ def test_settings() -> TestSettings:
 # ---------------------------------------------------------------------------
 
 
-def _make_connection(host: str, user: str, ssh_key: str | None) -> Connection:
+def _format_ssh_failure(host: str, user: str, ssh_key: str | None, exc: Exception) -> str:
+    """Build a concise operator-facing SSH failure message."""
+    agent_hint = (
+        f"SSH_AUTH_SOCK is set: {os.environ['SSH_AUTH_SOCK']}"
+        if os.environ.get("SSH_AUTH_SOCK")
+        else "SSH_AUTH_SOCK is not set; no ssh-agent is visible to the test runner."
+    )
+    auth_hint = (
+        f"Configured key: {ssh_key}"
+        if ssh_key
+        else "No explicit SSH key configured; relying on ssh-agent or default ~/.ssh/id_* keys."
+    )
+    return (
+        f"Failed to open SSH connection to {user}@{host}.\n"
+        f"{auth_hint}\n"
+        f"{agent_hint}\n"
+        "Fix one of the following before rerunning the live phase tests:\n"
+        "1. Configure a working SSH key path in tests/.env (for example SPARK_SSH_KEY or MAC_SSH_KEY).\n"
+        "2. Start ssh-agent and load the correct key with ssh-add.\n"
+        "3. Verify the host accepts non-interactive SSH: ssh -o BatchMode=yes <host> true\n"
+        f"Original error: {exc}"
+    )
+
+
+def _make_connection(host: str, user: str, ssh_key: str | None, timeout: float = 10) -> Connection:
     """Build a Fabric Connection with a 10-second connect timeout.
 
     Args:
@@ -50,9 +76,9 @@ def _make_connection(host: str, user: str, ssh_key: str | None) -> Connection:
     Returns:
         An open :class:`fabric.Connection` instance.
     """
-    connect_kwargs: dict = {"timeout": 10}
+    connect_kwargs: dict = {"timeout": timeout}
     if ssh_key:
-        connect_kwargs["key_filename"] = ssh_key
+        connect_kwargs["key_filename"] = str(ssh_key)
 
     conn = Connection(
         host=host,
@@ -61,8 +87,40 @@ def _make_connection(host: str, user: str, ssh_key: str | None) -> Connection:
     )
     # Eagerly open the transport so failures surface at fixture setup time
     # rather than mid-test.
-    conn.open()
+    try:
+        conn.open()
+    except Exception as exc:  # pragma: no cover - exercised in live environments
+        raise RuntimeError(_format_ssh_failure(host, user, ssh_key, exc)) from exc
     return conn
+
+
+def _require_enabled(enabled: bool, label: str) -> None:
+    """Skip fixtures and tests for optional topology components when disabled."""
+    if not enabled:
+        pytest.skip(
+            f"{label} host is disabled in the active test topology. "
+            f"Enable it in tests/.env if you want to validate that optional component."
+        )
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Skip optional Pi-only tests when the Pi topology is disabled."""
+    settings = TestSettings()
+    if settings.pi.enabled:
+        return
+
+    skip_pi = pytest.mark.skip(
+        reason=(
+            "Raspberry Pi topology is disabled in the active test configuration. "
+            "Set PI_ENABLED=true in tests/.env to run Pi-specific validation."
+        )
+    )
+    for item in items:
+        if (
+            "tests/phase3_pi/" in item.nodeid
+            or "tests/phase0_preflight/test_pi_prerequisites.py" in item.nodeid
+        ):
+            item.add_marker(skip_pi)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +136,13 @@ def spark_ssh(test_settings: TestSettings):
     tests raise exceptions.
     """
     s = test_settings.spark
-    conn = _make_connection(host=s.host, user=s.user, ssh_key=s.ssh_key)
+    _require_enabled(s.enabled, "Spark")
+    conn = _make_connection(
+        host=s.host,
+        user=s.user,
+        ssh_key=s.ssh_key,
+        timeout=test_settings.ssh_connect_timeout,
+    )
     try:
         yield conn
     finally:
@@ -92,7 +156,13 @@ def mac_ssh(test_settings: TestSettings):
     Yields the connection and guarantees it is closed in teardown.
     """
     s = test_settings.mac
-    conn = _make_connection(host=s.host, user=s.user, ssh_key=s.ssh_key)
+    _require_enabled(s.enabled, "Mac Studio")
+    conn = _make_connection(
+        host=s.host,
+        user=s.user,
+        ssh_key=s.ssh_key,
+        timeout=test_settings.ssh_connect_timeout,
+    )
     try:
         yield conn
     finally:
@@ -106,7 +176,13 @@ def pi_ssh(test_settings: TestSettings):
     Yields the connection and guarantees it is closed in teardown.
     """
     s = test_settings.pi
-    conn = _make_connection(host=s.host, user=s.user, ssh_key=s.ssh_key)
+    _require_enabled(s.enabled, "Raspberry Pi")
+    conn = _make_connection(
+        host=s.host,
+        user=s.user,
+        ssh_key=s.ssh_key,
+        timeout=test_settings.ssh_connect_timeout,
+    )
     try:
         yield conn
     finally:
@@ -133,6 +209,7 @@ def mac_ip(test_settings: TestSettings) -> str:
 @pytest.fixture(scope="session")
 def pi_ip(test_settings: TestSettings) -> str:
     """Return the primary IP address of the Raspberry Pi."""
+    _require_enabled(test_settings.pi.enabled, "Raspberry Pi")
     return test_settings.pi.ip
 
 
@@ -149,6 +226,12 @@ def spark_ollama_url(spark_ip: str) -> str:
 def spark_tailscale_ip(test_settings: TestSettings) -> str:
     """Return the Tailscale IP of the DGX Spark (100.x.x.x range)."""
     return test_settings.spark.tailscale_ip
+
+
+@pytest.fixture(scope="session")
+def spark_remote_ui_url(test_settings: TestSettings) -> str | None:
+    """Return the preferred remote UI URL for Spark when one is configured."""
+    return test_settings.spark_remote_ui_url
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +358,24 @@ def spark_prereqs(spark_ssh: Connection) -> SparkPrereqs:
         except ValueError:
             disk_free_gb = 0.0
 
+    # Free inodes on /
+    inode_result = _cmd(conn, "df -i / | awk 'NR==2 {print $4}' 2>&1")
+    try:
+        disk_inodes_free = int(_stdout(inode_result))
+    except ValueError:
+        disk_inodes_free = 0
+
     # Node.js version — "v22.4.0"
     node_result = _cmd(conn, "node --version 2>&1")
-    node_version = _stdout(node_result).lstrip("v")
+    raw_node = _stdout(node_result)
+    node_version_match = _re.search(r"(\d+\.\d+[\.\d]*)", raw_node)
+    node_version = node_version_match.group(1) if node_version_match else ""
+
+    # npm version
+    npm_result = _cmd(conn, "npm --version 2>&1")
+    raw_npm = _stdout(npm_result)
+    npm_version_match = _re.search(r"(\d+\.\d+[\.\d]*)", raw_npm)
+    npm_version = npm_version_match.group(1) if npm_version_match else ""
 
     # Landlock: check kernel LSM list
     landlock_result = _cmd(conn, "cat /sys/kernel/security/lsm 2>&1")
@@ -302,6 +400,8 @@ def spark_prereqs(spark_ssh: Connection) -> SparkPrereqs:
         "",
         "Tailscale is stopped.",
     )
+    tailscale_ip_result = _cmd(conn, "tailscale ip -4 2>/dev/null | head -1", timeout=15)
+    tailscale_ip = _stdout(tailscale_ip_result) or None
 
     return SparkPrereqs(
         docker_version=docker_version,
@@ -309,11 +409,14 @@ def spark_prereqs(spark_ssh: Connection) -> SparkPrereqs:
         ollama_version=ollama_version,
         models_available=models_available,
         disk_free_gb=disk_free_gb,
+        disk_inodes_free=disk_inodes_free,
         node_version=node_version,
+        npm_version=npm_version,
         landlock_supported=landlock_supported,
         seccomp_supported=seccomp_supported,
         cgroup_v2=cgroup_v2,
         tailscale_connected=tailscale_connected,
+        tailscale_ip=tailscale_ip,
     )
 
 
@@ -338,6 +441,18 @@ def mac_prereqs(mac_ssh: Connection) -> MacPrereqs:
     raw_ollama = _stdout(ollama_result)
     ollama_match = _re.search(r"(\d+\.\d+[\.\d]*)", raw_ollama)
     ollama_version = ollama_match.group(1) if ollama_match else ""
+    if not ollama_version:
+        ollama_api_version_result = _cmd(
+            conn,
+            "curl -fsS http://127.0.0.1:11434/api/version 2>/dev/null",
+            timeout=15,
+        )
+        ollama_api_version_match = _re.search(
+            r'"version"\s*:\s*"(\d+\.\d+[\.\d]*)"',
+            _stdout(ollama_api_version_result),
+        )
+        if ollama_api_version_match:
+            ollama_version = ollama_api_version_match.group(1)
 
     # Models available on Mac
     ollama_list_result = _cmd(conn, "ollama list 2>&1", timeout=60)
@@ -346,10 +461,21 @@ def mac_prereqs(mac_ssh: Connection) -> MacPrereqs:
         parts = line.split()
         if parts and parts[0] not in ("NAME", "name") and ":" in parts[0]:
             mac_models.append(parts[0])
+    if not mac_models:
+        ollama_tags_result = _cmd(
+            conn, "curl -fsS http://127.0.0.1:11434/api/tags 2>/dev/null", timeout=30
+        )
+        tags_output = _stdout(ollama_tags_result)
+        for match in _re.finditer(r'"name"\s*:\s*"([^"]+)"', tags_output):
+            mac_models.append(match.group(1))
 
-    # Node.js version
-    node_result = _cmd(conn, "node --version 2>&1")
-    node_version = _stdout(node_result).lstrip("v")
+    # Ollama API listening on localhost
+    ollama_listening_result = _cmd(
+        conn,
+        "curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1 && echo OK || echo FAIL",
+        timeout=15,
+    )
+    ollama_listening = _stdout(ollama_listening_result) == "OK"
 
     # Tailscale connected
     tailscale_result = _cmd(conn, "tailscale status 2>&1", timeout=15)
@@ -357,19 +483,24 @@ def mac_prereqs(mac_ssh: Connection) -> MacPrereqs:
         "",
         "Tailscale is stopped.",
     )
+    tailscale_ip_result = _cmd(conn, "tailscale ip -4 2>/dev/null | head -1", timeout=15)
+    tailscale_ip = _stdout(tailscale_ip_result) or None
 
-    # Docker available on Mac (Docker Desktop / Colima)
-    docker_result = _cmd(conn, "docker --version 2>&1")
-    raw_docker = _stdout(docker_result)
-    docker_match = _re.search(r"(\d+\.\d+[\.\d]*)", raw_docker)
-    docker_version = docker_match.group(1) if docker_match else ""
+    # launchd service state for Ollama
+    launchd_result = _cmd(
+        conn,
+        "launchctl list 2>/dev/null | grep -q 'com\\.ollama\\.ollama' && echo OK || echo FAIL",
+        timeout=15,
+    )
+    launchd_ollama_active = _stdout(launchd_result) == "OK"
 
     return MacPrereqs(
         ollama_version=ollama_version,
+        ollama_listening=ollama_listening,
         models_available=mac_models,
-        node_version=node_version,
         tailscale_connected=tailscale_connected,
-        docker_version=docker_version,
+        tailscale_ip=tailscale_ip,
+        launchd_ollama_active=launchd_ollama_active,
     )
 
 

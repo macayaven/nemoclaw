@@ -25,10 +25,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from typing import NoReturn
 
 from orchestrator.config import OrchestratorSettings
 from orchestrator.orchestrator import Orchestrator, PipelineStep
+from orchestrator.router_proxy import OpenAIRouterProxy, start_proxy_server
+from orchestrator.routing import build_default_capability_registry, build_default_routing_policy
 from orchestrator.task_manager import TaskType
 
 # ---------------------------------------------------------------------------
@@ -121,6 +124,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Check reachability of all configured sandboxes.",
     )
 
+    # ---- serve-proxy -----------------------------------------------------
+    proxy_parser = subparsers.add_parser(
+        "serve-proxy",
+        help="Run the host-side OpenAI-compatible router proxy.",
+    )
+    proxy_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Interface to bind the router proxy on (default: 127.0.0.1).",
+    )
+    proxy_parser.add_argument(
+        "--port",
+        type=int,
+        default=18080,
+        help="TCP port to bind the router proxy on (default: 18080).",
+    )
+    proxy_parser.add_argument(
+        "--local-upstream-url",
+        default="http://127.0.0.1:11434/v1",
+        dest="local_upstream_url",
+        help="Base URL for the default Spark local-model upstream.",
+    )
+    proxy_parser.add_argument(
+        "--medgemma-upstream-url",
+        default="http://mac-studio.local:11435/v1",
+        dest="medgemma_upstream_url",
+        help="Base URL for the Mac-hosted MedGemma upstream.",
+    )
+    proxy_parser.add_argument(
+        "--medgemma-model",
+        default="hf.co/google/gemma-3-27b-it-qat-q4_0-gguf",
+        dest="medgemma_model",
+        help="Model id to send to the MedGemma upstream when healthcare routing matches.",
+    )
+
     return parser
 
 
@@ -153,9 +191,19 @@ def _cmd_delegate(args: argparse.Namespace, orc: Orchestrator) -> int:
         return 1
 
     if args.json:
-        print(json.dumps({"agent": args.agent, "response": response}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "agent": args.agent,
+                    "task_id": response.task_id,
+                    "response": response.output_text,
+                    "duration_ms": response.duration_ms,
+                },
+                indent=2,
+            )
+        )
     else:
-        print(response)
+        print(response.output_text)
 
     return 0
 
@@ -230,7 +278,7 @@ def _cmd_pipeline(args: argparse.Namespace, orc: Orchestrator) -> int:
     else:
         for step in result.steps:
             print(f"\n--- Step {step.step_index + 1}: {step.agent} ({step.task_type}) ---")
-            print(step.output)
+            print(step.output_text)
         print("\n=== Final output ===")
         print(result.final_output)
         print(f"\nTotal duration: {result.total_duration_ms:.0f} ms")
@@ -320,6 +368,36 @@ def _cmd_health(args: argparse.Namespace, orc: Orchestrator) -> int:
     return 0 if all_healthy else 1
 
 
+def _cmd_serve_proxy(args: argparse.Namespace) -> int:
+    """Run the host-side router proxy until interrupted."""
+    policy = build_default_routing_policy(
+        local_proxy_upstream_url=args.local_upstream_url,
+        medgemma_upstream_url=args.medgemma_upstream_url,
+        medgemma_model=args.medgemma_model,
+    )
+    registry = build_default_capability_registry()
+    server = start_proxy_server(
+        app=OpenAIRouterProxy(policy=policy, registry=registry),
+        host=args.host,
+        port=args.port,
+    )
+
+    print(f"Router proxy listening on {server.base_url}")
+    print(f"Default local upstream: {args.local_upstream_url}")
+    print(f"MedGemma upstream:      {args.medgemma_upstream_url}")
+    print(
+        "To route OpenShell through this proxy, register an OpenAI-compatible provider "
+        f"that points to {server.base_url}/v1 and set the inference route to it."
+    )
+
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        server.shutdown()
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -334,19 +412,23 @@ def main(argv: list[str] | None = None) -> NoReturn:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    try:
-        settings = OrchestratorSettings()
-        orc = Orchestrator(settings)
-    except Exception as exc:
-        print(f"Failed to initialise orchestrator: {exc}", file=sys.stderr)
-        sys.exit(2)
-
     dispatch = {
         "delegate": _cmd_delegate,
         "pipeline": _cmd_pipeline,
         "status": _cmd_status,
         "health": _cmd_health,
     }
+
+    if args.command == "serve-proxy":
+        exit_code = _cmd_serve_proxy(args)
+        sys.exit(exit_code)
+
+    try:
+        settings = OrchestratorSettings()
+        orc = Orchestrator(settings)
+    except Exception as exc:
+        print(f"Failed to initialise orchestrator: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     handler = dispatch.get(args.command)
     if handler is None:

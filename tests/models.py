@@ -149,6 +149,8 @@ class SparkPrereqs(BaseModel):
     @classmethod
     def _validate_version_string(cls, v: Any) -> str:
         raw = str(v).strip()
+        if raw == "":
+            return raw
         _parse_version(raw)  # raises ValueError on unparseable input
         return raw
 
@@ -158,18 +160,26 @@ class SparkPrereqs(BaseModel):
 
     @property
     def docker_version_parsed(self) -> Version:
+        if not self.docker_version:
+            return Version("0")
         return _parse_version(self.docker_version)
 
     @property
     def ollama_version_parsed(self) -> Version:
+        if not self.ollama_version:
+            return Version("0")
         return _parse_version(self.ollama_version)
 
     @property
     def node_version_parsed(self) -> Version:
+        if not self.node_version:
+            return Version("0")
         return _parse_version(self.node_version)
 
     @property
     def npm_version_parsed(self) -> Version:
+        if not self.npm_version:
+            return Version("0")
         return _parse_version(self.npm_version)
 
 
@@ -202,11 +212,15 @@ class MacPrereqs(BaseModel):
     @classmethod
     def _validate_ollama_version(cls, v: Any) -> str:
         raw = str(v).strip()
+        if raw == "":
+            return raw
         _parse_version(raw)
         return raw
 
     @property
     def ollama_version_parsed(self) -> Version:
+        if not self.ollama_version:
+            return Version("0")
         return _parse_version(self.ollama_version)
 
 
@@ -229,11 +243,15 @@ class PiPrereqs(BaseModel):
     @classmethod
     def _validate_python_version(cls, v: Any) -> str:
         raw = str(v).strip()
+        if raw == "":
+            return raw
         _parse_version(raw)
         return raw
 
     @property
     def python3_version_parsed(self) -> Version:
+        if not self.python3_version:
+            return Version("0")
         return _parse_version(self.python3_version)
 
 
@@ -246,7 +264,14 @@ class OllamaModelInfo(BaseModel):
     """A single model entry from the Ollama /api/tags response."""
 
     name: str = Field(description="Full model name including tag, e.g. 'llama3:8b'.")
-    size_gb: float = Field(description="Model size on disk in gibibytes.")
+    size: int | float | None = Field(
+        default=None,
+        description="Model size on disk as returned by the Ollama API (typically bytes).",
+    )
+    size_gb: float = Field(
+        default=0.0,
+        description="Model size on disk in gibibytes, derived from the raw API payload.",
+    )
     family: str = Field(
         default="unknown",
         description="Model architecture family (e.g. 'llama', 'mistral').",
@@ -260,10 +285,31 @@ class OllamaModelInfo(BaseModel):
         description="Quantization descriptor (e.g. 'Q4_K_M', 'F16').",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _inflate_ollama_payload(cls, data: Any) -> Any:
+        """Normalize current Ollama /api/tags entries into a stable test shape."""
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        details = normalized.get("details") or {}
+        if isinstance(details, dict):
+            normalized.setdefault("family", details.get("family", "unknown"))
+            normalized.setdefault("parameter_size", details.get("parameter_size", ""))
+            normalized.setdefault("quantization_level", details.get("quantization_level", ""))
+
+        if "size_gb" not in normalized and "size" in normalized:
+            normalized["size_gb"] = normalized["size"]
+
+        return normalized
+
     @field_validator("size_gb", mode="before")
     @classmethod
     def _coerce_size(cls, v: Any) -> float:
         """Accept size in bytes (int) and convert, or a pre-converted float."""
+        if v is None:
+            return 0.0
         if isinstance(v, (int, float)) and v > 1_000_000:
             # Likely raw bytes from the Ollama API
             return round(v / (1024**3), 3)
@@ -399,13 +445,22 @@ class MessageContent(BaseModel):
 
     role: str = Field(default="assistant")
     content: str = Field(description="Text content of the message.")
+    reasoning: str = Field(
+        default="",
+        description="Reasoning text emitted by reasoning-first providers when content is empty.",
+    )
 
-    @field_validator("content", mode="before")
+    @field_validator("content", "reasoning", mode="before")
     @classmethod
     def _coerce_content(cls, v: Any) -> str:
         if v is None:
             return ""
         return str(v)
+
+    @property
+    def text(self) -> str:
+        """Return user-visible text, falling back to reasoning when needed."""
+        return self.content or self.reasoning
 
 
 class InferenceChoice(BaseModel):
@@ -453,7 +508,7 @@ class InferenceResponse(BaseModel):
     @property
     def first_content(self) -> str:
         """Shortcut to the text of the first choice's message."""
-        return self.choices[0].message.content if self.choices else ""
+        return self.choices[0].message.text if self.choices else ""
 
 
 # ---------------------------------------------------------------------------

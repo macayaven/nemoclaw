@@ -23,13 +23,12 @@ spark_ssh : fabric.Connection — live SSH connection to the DGX Spark node.
 
 from __future__ import annotations
 
-import contextlib
-
 import pytest
 from fabric import Connection
 
-from ..helpers import generate_unique_id, run_remote
+from ..helpers import curl_attempt_was_blocked, generate_unique_id, run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -83,9 +82,10 @@ class TestFilesystemIsolation:
         file_path_in_sandbox: str = f"{_SANDBOX_TEMP_DIR}/{temp_filename}"
 
         # Step 1: Create the file in sandbox A (claude-dev)
-        create_result: CommandResult = run_remote(
+        create_result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX_A} touch {file_path_in_sandbox} 2>&1",
+            _SANDBOX_A,
+            f"touch {file_path_in_sandbox}",
             timeout=15,
         )
         assert create_result.return_code == 0, (
@@ -95,12 +95,10 @@ class TestFilesystemIsolation:
 
         try:
             # Step 2: Check whether the file appears in sandbox B (codex-dev)
-            check_result: CommandResult = run_remote(
+            check_result: CommandResult = run_sandbox_command(
                 spark_ssh,
-                (
-                    f"docker exec {_SANDBOX_B} "
-                    f"test -f {file_path_in_sandbox} && echo FOUND || echo ABSENT"
-                ),
+                _SANDBOX_B,
+                f"test -f {file_path_in_sandbox} && echo FOUND || echo ABSENT",
                 timeout=15,
             )
             visibility = check_result.stdout.strip().upper()
@@ -114,9 +112,10 @@ class TestFilesystemIsolation:
             )
         finally:
             # Step 3: Cleanup — remove the temp file from sandbox A
-            run_remote(
+            run_sandbox_command(
                 spark_ssh,
-                f"docker exec {_SANDBOX_A} rm -f {file_path_in_sandbox} 2>&1",
+                _SANDBOX_A,
+                f"rm -f {file_path_in_sandbox}",
                 timeout=10,
             )
 
@@ -148,43 +147,26 @@ class TestNetworkIsolation:
         A successful HTTP response (exit code 0 with HTTP 2xx/3xx) is the
         failure mode — it means the egress policy is not enforced.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
+            _SANDBOX_A,
             (
-                f"docker exec {_SANDBOX_A} "
-                f"curl --silent --max-time 5 {_BLOCKED_EXTERNAL_URL} 2>&1"
-                f"; echo EXIT:$?"
+                "sh -c '"
+                "tmp=$(mktemp); "
+                f'status=$(curl --silent --output "$tmp" --write-out "%{{http_code}}" '
+                f"--max-time 5 {_BLOCKED_EXTERNAL_URL} 2>/dev/null); "
+                "rc=$?; "
+                'printf "CURL_EXIT:%s HTTP_STATUS:%s\\n" "$rc" "$status"; '
+                'cat "$tmp"; rm -f "$tmp"\''
             ),
             timeout=20,
         )
         combined = result.stdout + " " + result.stderr
-        # Extract the exit code we embedded via echo EXIT:$?
-        exit_code: int | None = None
-        for part in combined.split():
-            if part.startswith("EXIT:"):
-                with contextlib.suppress(ValueError):
-                    exit_code = int(part.split(":", 1)[1])
-                break
-
-        # curl exit code 0 means an HTTP response was received — egress not blocked.
-        # Any non-zero exit (28=timeout, 7=connect-refused, 6=resolve, etc.) is correct.
-        if exit_code is not None:
-            assert exit_code != 0, (
-                f"curl to {_BLOCKED_EXTERNAL_URL!r} from inside {_SANDBOX_A!r} "
-                f"succeeded (curl exit 0), meaning the egress firewall is NOT blocking "
-                "unapproved outbound connections. "
-                "Review the sandbox network policy and ensure a default-deny rule "
-                "is in place: openshell sandbox policy show claude-dev"
-            )
-        else:
-            # Could not parse the injected exit code; fall back to checking for
-            # obvious success indicators in the output.
-            success_indicators = {"200 ok", "301", "302", "<!doctype", "<html"}
-            assert not any(ind in combined.lower() for ind in success_indicators), (
-                f"curl to {_BLOCKED_EXTERNAL_URL!r} appears to have succeeded "
-                "(response body found in output) despite the egress policy. "
-                f"Combined output (first 300 chars): {combined[:300]!r}"
-            )
+        assert curl_attempt_was_blocked(combined), (
+            f"curl to {_BLOCKED_EXTERNAL_URL!r} from inside {_SANDBOX_A!r} was "
+            "not blocked by the default-deny egress policy. "
+            f"Combined output (first 300 chars): {combined[:300]!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -217,47 +199,34 @@ class TestEgressBlocking:
         OpenShell version; we accept any of these keywords alongside the
         target IP address.
         """
-        # Step 1: Record the current log position so we only scan new entries.
-        # Use `wc -l` on the log file as a simple position marker.
-        log_path: str = "/var/log/openshell/audit.log"
-        before_result: CommandResult = run_remote(
+        # Step 1: Trigger a blocked connection from the sandbox.
+        run_sandbox_command(
             spark_ssh,
-            f"wc -l < {log_path} 2>/dev/null || echo 0",
-            timeout=10,
-        )
-        try:
-            log_line_before = int(before_result.stdout.strip())
-        except ValueError:
-            log_line_before = 0
-
-        # Step 2: Trigger a blocked connection from the sandbox.
-        run_remote(
-            spark_ssh,
-            (
-                f"docker exec {_SANDBOX_A} "
-                f"curl --silent --max-time 3 {_BLOCKED_EXTERNAL_URL} 2>&1 || true"
-            ),
+            _SANDBOX_A,
+            f"curl --silent --max-time 3 {_BLOCKED_EXTERNAL_URL} 2>&1 || true",
             timeout=15,
         )
 
-        # Step 3: Read new log entries since our marker.
+        # Step 2: Read recent OpenShell log entries for the sandbox.
         new_entries_result: CommandResult = run_remote(
             spark_ssh,
-            f"tail -n +{log_line_before + 1} {log_path} 2>/dev/null || echo ''",
+            f"openshell logs -n 50 --since 1m {_SANDBOX_A}",
             timeout=10,
         )
         new_log_content = new_entries_result.stdout.lower()
 
-        denial_keywords = {"deny", "denied", "blocked", "drop", "reject"}
+        denial_keywords = {"action=deny", "denied", "blocked", "drop", "reject"}
         found_denial = any(kw in new_log_content for kw in denial_keywords)
-        found_target = _BLOCKED_EXTERNAL_IP in new_log_content
+        found_target = (
+            _BLOCKED_EXTERNAL_IP in new_log_content or "dst_host=8.8.8.8" in new_log_content
+        )
 
         assert found_denial and found_target, (
             f"Expected to find a denial log entry referencing {_BLOCKED_EXTERNAL_IP!r} "
-            f"in {log_path!r} after triggering a blocked connection from {_SANDBOX_A!r}. "
+            f"in recent OpenShell logs after triggering a blocked connection from {_SANDBOX_A!r}. "
             f"Denial keyword found: {found_denial}. "
             f"Target IP found: {found_target}. "
-            "Ensure the OpenShell network policy engine writes audit events to "
-            f"{log_path} and that the log path is correct. "
+            "Ensure the OpenShell network policy engine emits deny entries via "
+            "'openshell logs'. "
             f"New log entries (first 500 chars):\n{new_entries_result.stdout[:500]}"
         )

@@ -1,134 +1,55 @@
-r"""Bridge that executes commands inside OpenShell sandbox containers.
-
-The bridge constructs ``openshell sandbox connect <name> -- <cmd>`` shell
-invocations and returns structured results. All I/O crosses the sandbox
-boundary through subprocess pipes; no shared filesystem is assumed.
-
-Example::
-
-    from orchestrator.config import OrchestratorSettings
-    from orchestrator.sandbox_bridge import SandboxBridge
-
-    bridge = SandboxBridge(OrchestratorSettings())
-    result = bridge.run_in_sandbox("codex-dev", "echo hello")
-    print(result.stdout)  # "hello\\n"
-"""
+r"""Bridge that executes commands inside OpenShell sandbox containers."""
 
 from __future__ import annotations
 
+import selectors
 import shlex
 import subprocess
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from io import BufferedReader
+from typing import TYPE_CHECKING, cast
 
-from pydantic import BaseModel, computed_field
+from orchestrator.models import SandboxResult
 
 if TYPE_CHECKING:
     from orchestrator.config import OrchestratorSettings
 
-
-# ---------------------------------------------------------------------------
-# Result model
-# ---------------------------------------------------------------------------
+OutputChunkHandler = Callable[[str, bytes], None]
 
 
-class SandboxResult(BaseModel):
-    """Structured result returned by a sandbox command execution.
-
-    Attributes:
-        sandbox_name: The OpenShell sandbox that handled the command.
-        stdout: Captured standard output from the command.
-        stderr: Captured standard error from the command.
-        return_code: Process exit code; 0 indicates success.
-        duration_ms: Wall-clock execution time in milliseconds.
-    """
-
-    sandbox_name: str
-    stdout: str
-    stderr: str
-    return_code: int
-    duration_ms: float
-
-    @computed_field  # type: ignore[misc]
-    @property
-    def success(self) -> bool:
-        """True when the command exited with return code 0."""
-        return self.return_code == 0
-
-
-# ---------------------------------------------------------------------------
-# Bridge
-# ---------------------------------------------------------------------------
-
-
-# Maps logical agent type strings to the CLI invocation template used when
-# calling send_prompt.  The placeholder ``{prompt}`` is replaced with the
-# properly shell-quoted prompt text.
 _AGENT_CMD_TEMPLATES: dict[str, str] = {
     "openclaw": "openclaw agent --agent main --local -m {prompt} --session-id orchestrator",
     "claude": "claude -p {prompt} --output-format text",
     "codex": "source ~/.bashrc && cd /sandbox && codex exec {prompt}",
     "gemini": "gemini -p {prompt}",
+    "opencode": "source ~/.bashrc && cd /sandbox && opencode run -m zai/glm-5.1 {prompt}",
 }
 
 
 class SandboxBridge:
-    """Sends commands into OpenShell sandboxes from the DGX Spark host.
-
-    This class wraps ``openshell sandbox connect <name> -- <cmd>`` and
-    provides higher-level helpers for prompting agents and checking
-    sandbox health.
-
-    Attributes:
-        settings: Orchestrator-wide configuration object.
-    """
+    """Sends commands into OpenShell sandboxes from the host."""
 
     def __init__(self, settings: OrchestratorSettings) -> None:
-        """Initialise the bridge with the given orchestrator settings.
-
-        Args:
-            settings: Fully-populated OrchestratorSettings instance.
-        """
         self.settings = settings
-
-    # ------------------------------------------------------------------
-    # Core execution
-    # ------------------------------------------------------------------
 
     def run_in_sandbox(
         self,
         sandbox_name: str,
         command: str,
         timeout: int | None = None,
+        *,
+        on_chunk: OutputChunkHandler | None = None,
     ) -> SandboxResult:
-        """Execute *command* inside the named sandbox and return the result.
-
-        The command string is passed verbatim as the ``--`` argument to
-        ``openshell sandbox connect``, which runs it inside the container
-        via the default shell.
-
-        Args:
-            sandbox_name: OpenShell sandbox identifier.
-            command: Shell command string to run inside the container.
-            timeout: Seconds to wait before raising TimeoutExpired.
-                Defaults to ``settings.sandbox_timeout``.
-
-        Returns:
-            SandboxResult populated with stdout, stderr, return code, and
-            elapsed time.
-
-        Raises:
-            subprocess.TimeoutExpired: If the command exceeds *timeout*.
-        """
         if not command.strip():
             raise ValueError("command must not be empty")
 
         effective_timeout = timeout if timeout is not None else self.settings.sandbox_timeout
-
-        # openshell sandbox connect doesn't accept trailing commands.
-        # Use SSH with the openshell ssh-proxy as ProxyCommand instead.
+        output_limit = self.settings.sandbox_output_limit_bytes
         outer_cmd: list[str] = [
             "ssh",
+            "-o",
+            "BatchMode=yes",
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
@@ -136,104 +57,128 @@ class SandboxBridge:
             "-o",
             "LogLevel=ERROR",
             "-o",
+            f"ConnectTimeout={self.settings.ssh_connect_timeout}",
+            "-o",
+            f"ServerAliveInterval={self.settings.ssh_server_alive_interval}",
+            "-o",
+            f"ServerAliveCountMax={self.settings.ssh_server_alive_count_max}",
+            "-o",
             f"ProxyCommand=openshell ssh-proxy --gateway-name openshell --name {sandbox_name}",
             f"sandbox@openshell-{sandbox_name}",
             command,
         ]
 
         start_ns = time.monotonic_ns()
+        process = subprocess.Popen(
+            outer_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+        )
+        selector = selectors.DefaultSelector()
+        assert process.stdout is not None
+        assert process.stderr is not None
+        selector.register(process.stdout, selectors.EVENT_READ, data="stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, data="stderr")
+
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        stdout_bytes = 0
+        stderr_bytes = 0
+        stdout_kept = 0
+        stderr_kept = 0
+        stdout_truncated = False
+        stderr_truncated = False
+
+        def _capture(stream_name: str, chunk: bytes) -> None:
+            nonlocal stdout_bytes, stderr_bytes, stdout_kept, stderr_kept
+            nonlocal stdout_truncated, stderr_truncated
+            if stream_name == "stdout":
+                stdout_bytes += len(chunk)
+                remaining = max(output_limit - stdout_kept, 0)
+                if remaining > 0:
+                    kept = chunk[:remaining]
+                    stdout_chunks.append(kept)
+                    stdout_kept += len(kept)
+                if stdout_kept < stdout_bytes:
+                    stdout_truncated = True
+            else:
+                stderr_bytes += len(chunk)
+                remaining = max(output_limit - stderr_kept, 0)
+                if remaining > 0:
+                    kept = chunk[:remaining]
+                    stderr_chunks.append(kept)
+                    stderr_kept += len(kept)
+                if stderr_kept < stderr_bytes:
+                    stderr_truncated = True
+
         try:
-            proc = subprocess.run(
-                outer_cmd,
-                capture_output=True,
-                text=True,
-                timeout=effective_timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            elapsed_ms = (time.monotonic_ns() - start_ns) / 1_000_000
-            # Re-raise with context so callers can inspect the partial output.
-            raise subprocess.TimeoutExpired(
-                cmd=outer_cmd,
-                timeout=effective_timeout,
-                output=exc.output,
-                stderr=exc.stderr,
-            ) from exc
+            while selector.get_map():
+                elapsed = (time.monotonic_ns() - start_ns) / 1_000_000_000
+                remaining_timeout = effective_timeout - elapsed
+                if remaining_timeout <= 0:
+                    process.kill()
+                    process.wait()
+                    elapsed_ms = (time.monotonic_ns() - start_ns) / 1_000_000
+                    raise subprocess.TimeoutExpired(
+                        cmd=outer_cmd,
+                        timeout=effective_timeout,
+                        output=b"".join(stdout_chunks),
+                        stderr=b"".join(stderr_chunks),
+                    )
+
+                for key, _mask in selector.select(timeout=remaining_timeout):
+                    stream = cast(BufferedReader, key.fileobj)
+                    chunk = stream.read1(4096)
+                    if not chunk:
+                        selector.unregister(stream)
+                        continue
+                    _capture(key.data, chunk)
+                    if on_chunk is not None:
+                        on_chunk(key.data, chunk)
+
+            return_code = process.wait(timeout=1)
+        finally:
+            selector.close()
 
         elapsed_ms = (time.monotonic_ns() - start_ns) / 1_000_000
-
         return SandboxResult(
             sandbox_name=sandbox_name,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
-            return_code=proc.returncode,
+            command=command,
+            stdout=b"".join(stdout_chunks).decode("utf-8", errors="replace"),
+            stderr=b"".join(stderr_chunks).decode("utf-8", errors="replace"),
+            stdout_bytes=stdout_bytes,
+            stderr_bytes=stderr_bytes,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
+            return_code=return_code,
             duration_ms=elapsed_ms,
         )
-
-    # ------------------------------------------------------------------
-    # Higher-level helpers
-    # ------------------------------------------------------------------
 
     def send_prompt(
         self,
         sandbox_name: str,
         prompt: str,
         agent_type: str = "openclaw",
-    ) -> str:
-        """Send a natural-language prompt to the agent running in *sandbox_name*.
-
-        Selects the correct CLI invocation for the given *agent_type* and
-        returns the agent's textual response (stdout).
-
-        Args:
-            sandbox_name: OpenShell sandbox identifier.
-            prompt: Natural-language prompt to send to the agent.
-            agent_type: One of ``"openclaw"``, ``"claude"``, ``"codex"``,
-                ``"gemini"``.  Determines which CLI binary is used inside
-                the sandbox.
-
-        Returns:
-            The agent's response as a stripped string.
-
-        Raises:
-            ValueError: If *agent_type* is not recognised.
-            RuntimeError: If the sandbox command exits with a non-zero code.
-            subprocess.TimeoutExpired: If the agent takes too long.
-        """
+        *,
+        on_chunk: OutputChunkHandler | None = None,
+    ) -> SandboxResult:
         if agent_type not in _AGENT_CMD_TEMPLATES:
             supported = ", ".join(sorted(_AGENT_CMD_TEMPLATES))
             raise ValueError(
                 f"Unsupported agent_type {agent_type!r}. Supported values: {supported}"
             )
 
-        template = _AGENT_CMD_TEMPLATES[agent_type]
-        # Shell-quote the prompt so multi-word / special-character prompts
-        # are passed as a single argument inside the container.
-        quoted_prompt = shlex.quote(prompt)
-        command = template.format(prompt=quoted_prompt)
-
-        result = self.run_in_sandbox(sandbox_name, command)
-
+        command = _AGENT_CMD_TEMPLATES[agent_type].format(prompt=shlex.quote(prompt))
+        result = self.run_in_sandbox(sandbox_name, command, on_chunk=on_chunk)
         if not result.success:
             raise RuntimeError(
                 f"Sandbox {sandbox_name!r} returned exit code {result.return_code}.\n"
                 f"stderr: {result.stderr.strip()}"
             )
-
-        return result.stdout.strip()
+        return result
 
     def is_sandbox_healthy(self, sandbox_name: str) -> bool:
-        """Check whether the sandbox is reachable and responsive.
-
-        Runs a trivial ``echo ok`` inside the sandbox to verify that
-        ``openshell sandbox connect`` can reach the container.
-
-        Args:
-            sandbox_name: OpenShell sandbox identifier.
-
-        Returns:
-            True if the sandbox responds to ``echo ok`` within the timeout,
-            False otherwise.
-        """
         try:
             result = self.run_in_sandbox(sandbox_name, "echo ok", timeout=10)
             return result.success and "ok" in result.stdout
@@ -241,13 +186,4 @@ class SandboxBridge:
             return False
 
     def list_sandboxes(self) -> list[str]:
-        """Return the list of known sandbox names from the current settings.
-
-        The list is derived from ``settings.agents`` and reflects configured
-        sandboxes, not runtime state.  Use :meth:`is_sandbox_healthy` to
-        verify individual sandbox availability.
-
-        Returns:
-            Sorted list of sandbox name strings.
-        """
         return sorted({agent.sandbox_name for agent in self.settings.agents.values()})

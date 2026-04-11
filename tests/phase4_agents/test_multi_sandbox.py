@@ -22,7 +22,6 @@ spark_ssh : fabric.Connection — live SSH connection to the DGX Spark node.
 
 from __future__ import annotations
 
-import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import NamedTuple
@@ -32,6 +31,7 @@ from fabric import Connection
 
 from ..helpers import generate_unique_id, run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command, strip_ansi
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -61,27 +61,30 @@ class _SandboxPortInfo(NamedTuple):
     ports: list[int]
 
 
-def _parse_host_ports(port_spec: str) -> list[int]:
-    """Extract host-side TCP port numbers from a Docker port specification.
+def _parse_forward_list(output: str) -> list[_SandboxPortInfo]:
+    """Extract sandbox names and forwarded ports from ``openshell forward list``.
 
-    Docker formats exposed ports in several ways depending on the binding:
-    - ``0.0.0.0:8080->8080/tcp``
-    - ``:::8080->8080/tcp``
-    - ``8080/tcp``  (container-only, no host binding)
-
-    Args:
-        port_spec: Raw string from ``docker inspect`` or ``docker ps`` port
-            fields, possibly containing multiple mappings separated by commas.
-
-    Returns:
-        Sorted list of unique host-side integer port numbers that are bound on
-        the host.  Container-only ports (no ``->`` mapping) are excluded.
+    The current OpenShell CLI exposes forwarding state as a tabular list.
+    This parser tolerates ANSI escapes and extra whitespace while requiring
+    at least a sandbox name and a numeric port column.
     """
-    ports: list[int] = []
-    # Match patterns like "0.0.0.0:8080->" or ":::8080->"
-    for m in re.finditer(r"(?:0\.0\.0\.0|:::):(\d+)->", port_spec):
-        ports.append(int(m.group(1)))
-    return sorted(set(ports))
+    clean = strip_ansi(output)
+    entries: list[_SandboxPortInfo] = []
+
+    for raw_line in clean.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("names"):
+            continue
+
+        parts = line.split()
+        if len(parts) < 4 or not parts[2].isdigit():
+            continue
+
+        name_field = parts[0]
+        ports = [int(parts[2])]
+        entries.append(_SandboxPortInfo(name=name_field, ports=ports))
+
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -100,36 +103,29 @@ class TestAllSandboxesRunning:
 
     @pytest.mark.parametrize("sandbox_name", _EXPECTED_SANDBOXES)
     def test_four_sandboxes_exist(self, spark_ssh: Connection, sandbox_name: str) -> None:
-        """Each of the four expected sandbox containers is running.
+        """Each of the four expected sandboxes is present and Ready.
 
-        Queries Docker for the given container name and asserts its status is
-        ``running``.  All four sandboxes — ``nemoclaw-main``, ``claude-dev``,
-        ``codex-dev``, and ``gemini-dev`` — must be simultaneously running for
-        the full NemoClaw Phase 4 deployment to be functional.
-
-        A missing container typically means the ``openshell sandbox create``
-        command was not executed for that agent, or the container crashed at
-        start-up and Docker's restart policy gave up.
-
-        Args:
-            sandbox_name: Parametrised sandbox container name.
+        Queries the supported OpenShell sandbox metadata command and asserts
+        that the descriptor reports ``Phase: Ready``.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"docker inspect --format '{{{{.State.Status}}}}' {sandbox_name} 2>&1",
+            f"openshell sandbox get {sandbox_name} 2>&1",
             timeout=15,
         )
         assert result.return_code == 0, (
-            f"docker inspect {sandbox_name!r} failed (exit {result.return_code}). "
-            "The sandbox container does not exist. "
+            f"'openshell sandbox get {sandbox_name}' failed (exit {result.return_code}). "
+            "The sandbox metadata may not exist or the gateway may be down. "
             f"Create it: openshell sandbox create {sandbox_name}. "
             f"stderr: {result.stderr!r}"
         )
-        status = result.stdout.strip().lower()
-        assert status == "running", (
-            f"Sandbox {sandbox_name!r} is not running (status={status!r}). "
-            "Restart: openshell sandbox start {sandbox_name}. "
-            f"Logs: docker logs {sandbox_name} --tail=50"
+        status = strip_ansi(result.stdout)
+        assert f"Name: {sandbox_name}" in status, (
+            f"Sandbox {sandbox_name!r} descriptor does not include the expected name.\n"
+            f"Full output:\n{status}"
+        )
+        assert "Phase: Ready" in status, (
+            f"Sandbox {sandbox_name!r} is not Ready in OpenShell.\nFull output:\n{status}"
         )
 
 
@@ -141,44 +137,31 @@ class TestAllSandboxesRunning:
 @pytest.mark.phase4
 @pytest.mark.contract
 class TestNoPortConflicts:
-    """Layer A: No two sandboxes share the same host-side TCP port.
+    """Layer A: No two sandboxes share the same forwarded host port.
 
-    Port conflicts cause Docker to refuse to start the second container that
-    tries to bind the port, which surfaces as a ``bind: address already in
-    use`` error.  In practice this means one of the sandboxes will always be
-    stopped, but ``docker ps`` can make it look like the failure is transient.
-    These tests detect the conflict before it causes a runtime error.
+    Port conflicts cause OpenShell to fail when binding the forward listener.
+    These tests inspect the live forward table before the conflict becomes a
+    runtime issue.
     """
 
     def test_unique_port_forwards(self, spark_ssh: Connection) -> None:
-        """All host-side port bindings across the four sandboxes are unique.
+        """All host-side port forwards across the four sandboxes are unique.
 
-        Collects the port bindings for each expected sandbox via
-        ``docker inspect`` and asserts that no port number appears in more
-        than one sandbox's binding list.  Reports all conflicts in a single
-        assertion message so the operator can fix them all at once rather than
-        discovering them one by one.
+        Reads the active OpenShell forward table and asserts that no forwarded
+        host port appears more than once.
         """
-        sandbox_port_infos: list[_SandboxPortInfo] = []
-
-        for sandbox_name in _EXPECTED_SANDBOXES:
-            result: CommandResult = run_remote(
-                spark_ssh,
-                (
-                    f"docker inspect --format "
-                    f"'{{{{range $p,$b := .NetworkSettings.Ports}}}}"
-                    f"{{{{$p}}}} {{{{range $b}}}}{{{{.HostPort}}}} {{{{end}}}}"
-                    f"{{{{end}}}}' {sandbox_name} 2>&1"
-                ),
-                timeout=15,
-            )
-            if result.return_code != 0:
-                # Container might not exist; skip port check and let
-                # TestAllSandboxesRunning report the missing container.
-                continue
-
-            ports = _parse_host_ports(result.stdout)
-            sandbox_port_infos.append(_SandboxPortInfo(name=sandbox_name, ports=ports))
+        result: CommandResult = run_remote(spark_ssh, "openshell forward list 2>&1", timeout=20)
+        assert result.return_code == 0, (
+            f"'openshell forward list' failed (exit {result.return_code}). "
+            "Cannot inspect active port forwards. "
+            f"stderr: {result.stderr!r}"
+        )
+        sandbox_port_infos = _parse_forward_list(result.stdout)
+        assert sandbox_port_infos, (
+            "OpenShell did not report any active forwards. "
+            "This usually means the gateway is not reachable or no sandboxes "
+            "have active forward listeners."
+        )
 
         # Build a mapping of port -> list[sandbox_name] to find conflicts.
         port_to_sandboxes: dict[int, list[str]] = {}
@@ -189,13 +172,13 @@ class TestNoPortConflicts:
         conflicts = {port: owners for port, owners in port_to_sandboxes.items() if len(owners) > 1}
 
         assert not conflicts, (
-            "Duplicate host-side port bindings detected across sandboxes. "
+            "Duplicate host-side port forwards detected across sandboxes. "
             "Conflicting ports:\n"
             + "\n".join(
                 f"  port {port}: claimed by {', '.join(sorted(owners))}"
                 for port, owners in sorted(conflicts.items())
             )
-            + "\nResolve by reassigning unique ports in each sandbox's port-forward config."
+            + "\nResolve by reassigning unique ports in the OpenShell forward configuration."
         )
 
 
@@ -232,9 +215,10 @@ class TestConcurrentAccess:
         def _run_in_sandbox(sandbox_name: str, token: str) -> None:
             """Execute echo <token> inside the named sandbox and store result."""
             try:
-                result = run_remote(
+                result = run_sandbox_command(
                     spark_ssh,
-                    f"docker exec {sandbox_name} echo {token}",
+                    sandbox_name,
+                    f"echo {token}",
                     timeout=20,
                 )
                 with lock:

@@ -125,10 +125,12 @@ make security-audit
 
 ### E2E-8: WhatsApp Channel (Manual)
 
-**What it validates:** WhatsApp -> Gateway -> Agent -> WhatsApp message flow.
+**What it validates:** WhatsApp -> native OpenClaw channel plugin -> Gateway -> Agent -> WhatsApp message flow.
 
 ```bash
+make policy-whatsapp
 make whatsapp-setup
+make whatsapp-login
 make channels-status
 # Expected: WhatsApp channel shows "connected"
 
@@ -145,7 +147,8 @@ make channels-status
 **What it validates:** Telegram -> Gateway -> Agent -> Telegram message flow.
 
 ```bash
-make telegram-setup
+make policy-telegram
+make telegram-setup TELEGRAM_BOT_TOKEN=<bot-token>
 make channels-status
 # Expected: Telegram channel shows "connected"
 
@@ -157,19 +160,19 @@ make channels-status
 
 ---
 
-### E2E-10: Remote Access (Manual)
+### E2E-10: Remote Access via Tailscale Serve (Manual)
 
-**What it validates:** Tailscale -> port forward -> Gateway remote access path.
+**What it validates:** Tailscale Serve -> Gateway remote access path.
 
 ```bash
 # From a remote device on the same tailnet:
-curl -sf https://spark-caeb.tail48bab7.ts.net:18789/
+curl -sf https://spark-caeb.tail48bab7.ts.net/
 # Expected: Gateway responds (may require device approval)
 
 make mac-approve  # If needed
 ```
 
-**Pass criteria:** Gateway UI is accessible from a Tailscale peer.
+**Pass criteria:** Gateway UI is accessible from a Tailscale peer via the Serve URL.
 
 ---
 
@@ -184,6 +187,6 @@ make mac-approve  # If needed
 | E2E-5 | Inter-agent delegation | Yes | `make e2e` |
 | E2E-6 | Multi-agent pipeline | Yes | `make pipeline` |
 | E2E-7 | Sandbox isolation | Yes | `make security-audit` |
-| E2E-8 | WhatsApp channel | No | `make whatsapp-setup` |
-| E2E-9 | Telegram channel | No | `make telegram-setup` |
-| E2E-10 | Remote access | No | `curl` from Tailscale peer |
+| E2E-8 | WhatsApp channel | No | `make policy-whatsapp && make whatsapp-setup && make whatsapp-login` |
+| E2E-9 | Telegram channel | No | `make policy-telegram && make telegram-setup TELEGRAM_BOT_TOKEN=...` |
+| E2E-10 | Remote access via Serve URL | No | `curl` from Tailscale peer |

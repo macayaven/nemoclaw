@@ -26,8 +26,8 @@ import contextlib
 import pytest
 from fabric import Connection
 
-from ..helpers import run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,10 +69,14 @@ class TestOpenClawIntegrity:
         """
         test_file = f"{_OPENCLAW_DIR}/nemoclaw_integrity_test"
 
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX} sh -c 'touch {test_file} 2>&1; echo EXIT:$?'",
+            _SANDBOX,
+            f"sh -c 'touch {test_file} 2>&1; echo EXIT:$?'",
             timeout=15,
+        )
+        assert result.return_code == 0, (
+            f"Could not execute the integrity check inside {_SANDBOX!r}. stderr: {result.stderr!r}"
         )
         combined = result.stdout + " " + result.stderr
 
@@ -85,11 +89,7 @@ class TestOpenClawIntegrity:
                 break
 
         # Clean up in case touch succeeded (vulnerability present)
-        run_remote(
-            spark_ssh,
-            f"docker exec {_SANDBOX} rm -f {test_file} 2>&1",
-            timeout=10,
-        )
+        run_sandbox_command(spark_ssh, _SANDBOX, f"rm -f {test_file}", timeout=10)
 
         assert exit_code is not None and exit_code != 0, (
             f"Sandbox user in {_SANDBOX!r} was able to create a file inside "
@@ -108,10 +108,15 @@ class TestOpenClawIntegrity:
         user from modifying directory entries (renaming, deleting, or creating
         config files).
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX} stat -c '%U' {_OPENCLAW_DIR} 2>&1",
+            _SANDBOX,
+            f"stat -c '%U' {_OPENCLAW_DIR} 2>&1",
             timeout=15,
+        )
+        assert result.return_code == 0, (
+            f"Could not read ownership for {_OPENCLAW_DIR!r} inside {_SANDBOX!r}. "
+            f"stderr: {result.stderr!r}"
         )
         owner = result.stdout.strip()
 
@@ -131,11 +136,15 @@ class TestOpenClawIntegrity:
         relying on exit code interpretation across different shell
         implementations.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX} sh -c "
-            f"'test -w {_OPENCLAW_JSON} && echo WRITABLE || echo PROTECTED'",
+            _SANDBOX,
+            f"sh -c 'test -w {_OPENCLAW_JSON} && echo WRITABLE || echo PROTECTED'",
             timeout=15,
+        )
+        assert result.return_code == 0, (
+            f"Could not check writability for {_OPENCLAW_JSON!r} inside {_SANDBOX!r}. "
+            f"stderr: {result.stderr!r}"
         )
         status = result.stdout.strip().upper()
 
@@ -157,10 +166,15 @@ class TestOpenClawIntegrity:
 
         This test verifies that ``.openclaw`` is not a symbolic link.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX} sh -c 'test -L {_OPENCLAW_DIR} && echo SYMLINK || echo REAL'",
+            _SANDBOX,
+            f"sh -c 'test -L {_OPENCLAW_DIR} && echo SYMLINK || echo REAL'",
             timeout=15,
+        )
+        assert result.return_code == 0, (
+            f"Could not check symlink status for {_OPENCLAW_DIR!r} inside {_SANDBOX!r}. "
+            f"stderr: {result.stderr!r}"
         )
         status = result.stdout.strip().upper()
 

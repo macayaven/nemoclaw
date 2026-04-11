@@ -30,6 +30,7 @@ from fabric import Connection
 from ..helpers import run_remote
 from ..models import CommandResult
 from ..settings import TestSettings
+from ._openshell_cli import run_sandbox_command
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -161,7 +162,8 @@ class TestSecretHygiene:
     ) -> None:
         """Raw API key values do not appear in sandbox environment listings.
 
-        Runs ``env`` inside each agent sandbox via ``docker exec`` and checks
+        Runs ``env`` inside each agent sandbox via the supported OpenShell
+        SSH bridge and checks
         that the plaintext API key values are not present in the output.
 
         OpenShell is expected to inject credentials via the provider SDK's
@@ -188,10 +190,11 @@ class TestSecretHygiene:
         leaks: list[str] = []
 
         for sandbox_name in _AGENT_SANDBOXES:
-            result: CommandResult = run_remote(
+            result: CommandResult = run_sandbox_command(
                 spark_ssh,
-                f"docker exec {sandbox_name} env 2>&1 || echo ''",
-                timeout=15,
+                sandbox_name,
+                "env 2>&1 || echo ''",
+                timeout=20,
             )
             env_output = result.stdout
 

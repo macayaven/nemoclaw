@@ -13,7 +13,7 @@ Step-by-step guides for the most common things you'll do with NemoClaw after dep
 1. Open the NemoClaw UI:
    - **From Mac (LAN):** `http://spark-caeb.local:18789`
    - **From Mac (NVIDIA Sync):** Click the OpenClaw entry in the Sync app
-   - **From anywhere (Tailscale):** `http://<spark-tailscale-ip>:18789`
+   - **From anywhere (Tailscale Serve):** `https://spark-caeb.tail48bab7.ts.net/`
 
 
 2. Type your message in the chat interface.
@@ -115,10 +115,10 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
    openshell sandbox connect codex-dev
    ```
 
-2. Codex is pre-configured to use Ollama on the Spark (via `~/.codex/config.toml`):
+2. Codex is pre-configured to use the Spark's local inference route (via `~/.codex/config.toml`):
    ```toml
    model = "nemotron-3-super:120b"
-   model_provider = "ollama"
+   model_provider = "spark-ollama"
    ```
 
 3. Use Codex normally:
@@ -128,6 +128,9 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
    ```
 
 4. All inference stays local — your code never leaves the Spark.
+
+For repeatable rebuilds, keep Codex auth in the Spark's local `pass` vault and
+re-materialize it with [agent-auth-vault.md](agent-auth-vault.md).
 
 **Switch Codex to a different model:**
 ```bash
@@ -237,12 +240,12 @@ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-12
 
 2. Open Safari on your phone and go to:
    ```
-   http://<spark-tailscale-ip>:18789
+   https://spark-caeb.tail48bab7.ts.net/
    ```
 
 3. Alternatively, install the OpenClaw iOS app (TestFlight):
    - The app auto-discovers the Spark gateway via Tailscale DNS-SD
-   - Or manually enter the Tailscale IP + port 18789
+   - Or manually enter the Tailscale Serve URL
 
 4. Chat as usual — the Spark does all the inference.
 

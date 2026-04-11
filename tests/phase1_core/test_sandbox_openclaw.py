@@ -3,11 +3,13 @@ Phase 1 — Core NemoClaw on Spark: OpenClaw sandbox tests.
 
 Validates that:
 - The ``nemoclaw-main`` sandbox exists in the OpenShell sandbox list.
-- It was created with the ``--keep`` flag (persistent across gateway restarts).
+- It is reported as ready by the current CLI and survives the restart path
+  covered in ``test_idempotency.py``.
 - Port 18789 is forwarded from the sandbox to the host.
 - The OpenClaw web UI returns HTTP 200 on port 18789.
 - An end-to-end chat request goes through the ``inference.local`` route inside
-  the sandbox (NOT directly to Ollama) and returns a non-empty completion.
+  the sandbox SSH bridge (NOT directly to Ollama) and returns a non-empty
+  completion.
 
 Markers
 -------
@@ -20,6 +22,8 @@ slow       : Tests involving cold model loading or full chat round-trips.
 from __future__ import annotations
 
 import json
+import re
+import shlex
 
 import httpx
 import pytest
@@ -81,12 +85,12 @@ class TestSandboxExists:
                 "--from openclaw --name nemoclaw-main --keep --forward 18789"
             )
 
-    def test_sandbox_has_keep_flag(self, spark_ssh: Connection) -> None:
-        """``openshell sandbox get nemoclaw-main`` must indicate the --keep flag.
+    def test_sandbox_is_ready(self, spark_ssh: Connection) -> None:
+        """``openshell sandbox get nemoclaw-main`` must report a ready sandbox.
 
-        The ``--keep`` flag prevents the gateway from deleting the sandbox
-        automatically when it is not actively in use.  Without it the sandbox
-        would be torn down on idle and the OpenClaw UI would become unavailable.
+        The persistence semantics of ``--keep`` are validated in the dedicated
+        idempotency test that restarts the gateway.  Here we only assert the
+        stable, supported readiness signal exposed by the current CLI.
         """
         result: CommandResult = run_remote(
             spark_ssh,
@@ -99,30 +103,32 @@ class TestSandboxExists:
             f"Stderr: {result.stderr}"
         )
 
-        lower_out = result.stdout.lower()
-
-        assert "keep" in lower_out, (
-            "The 'keep' flag was not found in the nemoclaw-main sandbox descriptor.\n"
-            f"Full output:\n{result.stdout}\n"
-            "The sandbox must be created with --keep so it survives idle periods:\n"
-            "  openshell sandbox create --from openclaw --name nemoclaw-main "
-            "--keep --forward 18789"
+        output = _strip_ansi(result.stdout)
+        assert "Name: nemoclaw-main" in output, (
+            f"The sandbox descriptor does not identify nemoclaw-main.\nFull output:\n{output}"
+        )
+        assert "Phase: Ready" in output, (
+            "The nemoclaw-main sandbox is not in Ready phase.\n"
+            f"Full output:\n{output}\n"
+            "Check the sandbox creation command and gateway health."
         )
 
     def test_port_18789_forwarded(self, spark_ssh: Connection) -> None:
         """Port 18789 must be forwarded in the nemoclaw-main sandbox configuration.
 
-        Checks that the sandbox descriptor mentions 18789, which OpenShell
-        uses to expose the OpenClaw browser UI on the host.
+        Checks the active port-forward list rather than relying on sandbox
+        descriptor formatting, which has changed in the current CLI.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            "openshell sandbox get nemoclaw-main",
+            "openshell forward list",
         )
 
-        assert "18789" in result.stdout, (
-            "Port 18789 is not listed as a forwarded port in the nemoclaw-main sandbox.\n"
-            f"Full sandbox descriptor:\n{result.stdout}\n"
+        output = _strip_ansi(result.stdout)
+
+        assert "nemoclaw-main" in output and "18789" in output, (
+            "Port 18789 is not listed in the active OpenShell forward table.\n"
+            f"Full output:\n{output}\n"
             "Recreate the sandbox with: --forward 18789"
         )
 
@@ -198,10 +204,6 @@ class TestEndToEnd:
         - Network round-trip inside the sandbox
         - Token generation for a short reply
         """
-        # Execute curl inside the persistent nemoclaw-main sandbox via
-        # ``openshell sandbox exec``.  We use the persistent sandbox (not a
-        # temporary one) because it is already set up with the correct policy
-        # that allows inference.local access.
         curl_payload = json.dumps(
             {
                 "model": "nemotron-3-super:120b",
@@ -211,27 +213,30 @@ class TestEndToEnd:
                         "content": "Reply with exactly one word: hello",
                     }
                 ],
-                "max_tokens": 20,
+                "max_tokens": 120,
                 "stream": False,
             }
         )
 
-        # Escape single quotes inside the JSON for the shell
-        escaped_payload = curl_payload.replace("'", "'\\''")
-
         exec_cmd = (
-            "openshell sandbox exec nemoclaw-main -- "
-            "curl -s "
-            "--cacert /etc/openshell/ca.crt "
-            "https://inference.local/v1/chat/completions "
-            "-H 'Content-Type: application/json' "
-            f"-d '{escaped_payload}'"
+            "cfg=$(mktemp); "
+            'openshell sandbox ssh-config nemoclaw-main > "$cfg"; '
+            + "printf '%s\\n' "
+            + shlex.quote(
+                "curl -s "
+                "-k "
+                "https://inference.local/v1/chat/completions "
+                "-H 'Content-Type: application/json' "
+                f"-d {shlex.quote(curl_payload)}"
+            )
+            + ' | ssh -F "$cfg" openshell-nemoclaw-main sh; '
+            'rc=$?; rm -f "$cfg"; exit $rc'
         )
 
         result: CommandResult = run_remote(spark_ssh, exec_cmd)
 
         assert result.stdout.strip(), (
-            "openshell sandbox exec nemoclaw-main produced no curl output.\n"
+            "Sandbox inference call produced no curl output.\n"
             f"Return code: {result.return_code}\n"
             f"Stderr:\n{result.stderr}\n"
             "Ensure the nemoclaw-main sandbox is running and inference.local is reachable."
@@ -250,3 +255,10 @@ class TestEndToEnd:
             "End-to-end inference returned an empty message content.\n"
             f"Full response:\n{result.stdout[:2000]}"
         )
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)

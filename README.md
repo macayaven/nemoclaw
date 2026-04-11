@@ -4,7 +4,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
-A **test-driven deployment framework** for running [NemoClaw](https://www.nvidia.com/nemoclaw) — NVIDIA's open-source reference stack for safe, private AI agent execution — across a two-node home lab. It contains the architecture documentation, phase-by-phase action plan, and pytest tests spanning pre-flight validation plus deployment and orchestration phases. Tests define the expected state of each machine before and after every deployment step; passing all tests in a phase means that phase is complete.
+A **test-driven deployment framework** for running [NemoClaw](https://www.nvidia.com/nemoclaw) — NVIDIA's open-source reference stack for safe, private AI agent execution — across a two-node Spark + Mac home lab. The Spark + Mac topology is the default path; a Raspberry Pi is treated as optional legacy infrastructure only. This repository contains the architecture documentation, phase-by-phase action plan, and pytest tests spanning pre-flight validation plus deployment and orchestration phases. Tests define the expected state of each machine before and after every deployment step; passing all tests in a phase means that phase is complete.
 
 The stack runs four AI coding agents (OpenClaw, Claude Code, Codex, Gemini CLI) simultaneously in isolated OpenShell sandboxes, with local Nemotron inference as the default and cloud APIs as an explicit opt-in.
 
@@ -81,7 +81,7 @@ graph TB
 
     SPARK <-- "Tailscale VPN" --> MAC
     REMOTE <-- "Tailscale VPN" --> SPARK
-    REMOTE -- "http://spark-tailscale-ip:18789" --> SB_OC
+    REMOTE -- "https://spark-caeb.tail48bab7.ts.net/" --> SB_OC
 ```
 
 ---
@@ -92,7 +92,7 @@ graph TB
 
 - [uv](https://docs.astral.sh/uv/) — Python project manager
 - Python 3.12 or later
-- SSH access to DGX Spark (`spark-caeb.local`)
+- SSH access to DGX Spark (`spark-caeb.local`) and Mac Studio (`mac-studio.local`)
 - Ollama running with `nemotron-3-super:120b` pulled on the Spark
 
 ### Install
@@ -124,7 +124,7 @@ Key variables:
 ### Run Phase 0 (pre-flight checks)
 
 ```bash
-uv run pytest tests/phase0_preflight/ -v
+uv run --project tests python -m pytest tests/phase0_preflight/ -v
 ```
 
 All tests must pass before proceeding. Phase 0 validates disk space, Docker, NVIDIA container runtime, Ollama, kernel features (Landlock, seccomp, cgroup v2), Tailscale connectivity, and Node.js.
@@ -235,7 +235,7 @@ nemoclaw/
     ├── phase0_preflight/            # Pre-flight checks on all machines
     ├── phase1_core/                 # NemoClaw on DGX Spark
     ├── phase2_mac/                  # Mac Studio integration
-    ├── phase3_pi/                   # (Legacy — Pi no longer in topology)
+    ├── phase3_pi/                   # Optional legacy Raspberry Pi topology (disabled by default)
     ├── phase4_agents/               # Coding agent sandboxes
     ├── phase5_mobile/               # Tailscale + mobile access
     └── phase6_orchestrator/         # Orchestrator unit/offline tests
@@ -247,25 +247,25 @@ nemoclaw/
 
 | Phase | Directory | Tests | What It Validates |
 |---|---|---|---|
-| **Phase 0** | `phase0_preflight/` | 28 | Disk space, Docker, NVIDIA runtime, Ollama, models, Landlock/seccomp/cgroup v2, Node.js, Tailscale |
+| **Phase 0** | `phase0_preflight/` | 28 | Disk space, Docker, NVIDIA runtime, Ollama, models, Landlock/seccomp/cgroup v2, Node.js, Tailscale on Spark + Mac |
 | **Phase 1** | `phase1_core/` | 25 | Ollama on `0.0.0.0:11434`, OpenShell gateway, provider registration, inference routing, nemoclaw-main sandbox, idempotency |
 | **Phase 2** | `phase2_mac/` | 17 | Ollama on Mac serving Gemma 4, mac-ollama provider, provider switching |
-| **Phase 3** | `phase3_pi/` | 20 | *(Legacy — skipped when Pi is not in topology)* |
+| **Phase 3** | `phase3_pi/` | 20 | *(Legacy optional Pi topology — run only when the Pi services are explicitly configured and reachable)* |
 | **Phase 4** | `phase4_agents/` | 25 | Claude Code, Codex, Gemini CLI sandboxes, concurrency, isolation, secret hygiene |
-| **Phase 5** | `phase5_mobile/` | 4 | Tailscale gateway binding, remote device reachability |
+| **Phase 5** | `phase5_mobile/` | 4 | Tailscale Serve remote access, remote device reachability |
 | **Phase 6** | `phase6_orchestrator/` | 47 | Orchestrator CLI, pipelines, sandbox bridge, shared workspace, task persistence |
 
 ```bash
 # Run tests for a specific phase
-uv run pytest tests/phase1_core/ -v
+uv run --project tests python -m pytest tests/phase1_core/ -v
 
 # By marker
-uv run pytest -m contract -v        # fast, no network required
-uv run pytest -m behavioral -v      # hits real endpoints
-uv run pytest -m "not slow" -v      # skip cold-start tests
+uv run --project tests python -m pytest -m contract -v        # fast, no network required
+uv run --project tests python -m pytest -m behavioral -v      # hits real endpoints
+uv run --project tests python -m pytest -m "not slow" -v      # skip cold-start tests
 
 # Full suite
-uv run pytest -v
+uv run --project tests python -m pytest -v
 ```
 
 ---

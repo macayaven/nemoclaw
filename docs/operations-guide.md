@@ -2,6 +2,11 @@
 
 How to start, stop, pause, restart, and manage your NemoClaw deployment day-to-day.
 
+The active default topology is DGX Spark + Mac Studio. For remote browser or
+mobile access, use the Tailscale Serve URL rather than a raw tailnet-IP
+`http://...:18789` endpoint unless you are intentionally debugging a direct
+port exposure.
+
 ---
 
 ## 1. Starting NemoClaw
@@ -195,9 +200,9 @@ nvidia-smi                              # GPU usage (Spark only)
 ### Run the test suite to validate state
 
 ```bash
-cd ~/workspace/nemoclaw/tests
-uv run pytest tests/phase1_core/ -v     # Validate Spark is healthy
-uv run pytest -v                        # Validate everything
+cd ~/workspace/nemoclaw
+uv run --project tests python -m pytest tests/phase1_core/ -v     # Validate Spark is healthy
+uv run --project tests python -m pytest -v                        # Validate everything
 ```
 
 ---

@@ -28,8 +28,8 @@ import contextlib
 import pytest
 from fabric import Connection
 
-from ..helpers import run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,9 +67,10 @@ def _assert_curl_blocked(
         url: URL to attempt to reach from inside the sandbox.
         description: Human-readable name of the target for error messages.
     """
-    result: CommandResult = run_remote(
+    result: CommandResult = run_sandbox_command(
         spark_ssh,
-        f"docker exec {sandbox_name} curl --max-time 3 -sf {url} 2>&1; echo EXIT:$?",
+        sandbox_name,
+        f"sh -c 'curl --max-time 3 -sf {url} 2>&1; echo EXIT:$?'",
         timeout=20,
     )
     combined = result.stdout + " " + result.stderr

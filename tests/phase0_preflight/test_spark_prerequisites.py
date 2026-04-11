@@ -304,7 +304,7 @@ class TestSparkKernel:
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            "test -d /sys/kernel/security/landlock && echo PRESENT || echo ABSENT",
+            "cat /sys/kernel/security/lsm 2>/dev/null | grep -qi landlock && echo PRESENT || echo ABSENT",
             timeout=10,
         )
         assert result.return_code == 0, f"Landlock check command failed: {result.stderr!r}"

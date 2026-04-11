@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import time
 import uuid
 from collections.abc import Callable
@@ -22,7 +23,7 @@ from tenacity import RetryError, retry, stop_after_delay, wait_fixed
 if TYPE_CHECKING:
     from fabric import Connection
 
-from .models import CommandResult
+from .models import CommandResult, OpenShellInferenceRoute, OpenShellProvider
 
 # ---------------------------------------------------------------------------
 # Remote command execution
@@ -49,13 +50,24 @@ def run_remote(conn: Connection, cmd: str, timeout: int = 30) -> CommandResult:
         TimeoutError: If the remote command does not complete within *timeout*
             seconds.
     """
+    # Run commands inside a login-like bash shell so operator-installed tools
+    # from profiles (for example nvm-managed node/npm) are visible over SSH in
+    # the same way they are during normal interactive administration.
+    shell_script = (
+        "source ~/.bashrc >/dev/null 2>&1 || true; "
+        "source ~/.profile >/dev/null 2>&1 || true; "
+        f"{cmd}"
+    )
+    wrapped_cmd = f"bash -lc {shlex.quote(shell_script)}"
+
     start = time.monotonic()
     try:
         result = conn.run(
-            cmd,
+            wrapped_cmd,
             hide=True,  # suppress output to the console
             warn=True,  # do not raise on non-zero exit
             timeout=timeout,
+            in_stream=False,  # avoid pytest capture / stdin forwarding issues
         )
     except Exception as exc:
         # Fabric wraps socket.timeout in various ways depending on the version;
@@ -75,6 +87,38 @@ def run_remote(conn: Connection, cmd: str, timeout: int = 30) -> CommandResult:
         return_code=result.return_code,
         duration_ms=duration_ms,
     )
+
+
+def run_in_sandbox(
+    conn: Connection,
+    sandbox_name: str,
+    command: str,
+    timeout: int = 60,
+) -> CommandResult:
+    """Run *command* inside an existing OpenShell sandbox over its SSH proxy.
+
+    The current OpenShell CLI no longer exposes ``sandbox run`` / ``sandbox exec``.
+    The supported non-interactive path is:
+    1. Generate the sandbox SSH config via ``openshell sandbox ssh-config``
+    2. Invoke ``ssh`` through the generated proxy
+
+    Args:
+        conn: Fabric connection to the gateway host.
+        sandbox_name: OpenShell sandbox name, e.g. ``"nemoclaw-main"``.
+        command: Shell command to execute inside the sandbox.
+        timeout: Seconds to wait before failing the remote command.
+
+    Returns:
+        A :class:`CommandResult` describing the sandbox command execution.
+    """
+    remote_cmd = (
+        "tmp_cfg=$(mktemp) && "
+        f'openshell sandbox ssh-config {sandbox_name} > "$tmp_cfg" && '
+        f"printf '%s\\n' {shlex.quote(command)} | "
+        f'ssh -F "$tmp_cfg" -o BatchMode=yes openshell-{sandbox_name} sh; '
+        'status=$?; rm -f "$tmp_cfg"; exit $status'
+    )
+    return run_remote(conn, remote_cmd, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +210,96 @@ def parse_json_output(output: str) -> dict | list:
         pass
 
     raise ValueError(f"No valid JSON found in output (first 200 chars): {output[:200]!r}")
+
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI color/control sequences from CLI output."""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def extract_tagged_int(output: str, tag: str) -> int | None:
+    """Extract an integer emitted as ``TAG:<value>`` from command output."""
+    match = re.search(rf"\b{re.escape(tag)}:(\d+)\b", output)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def curl_attempt_was_blocked(
+    output: str,
+    *,
+    denied_http_statuses: set[int] | None = None,
+) -> bool:
+    """Return True when wrapped curl output indicates policy blocking.
+
+    The current OpenShell proxy can deny egress by returning an HTTP status
+    such as 403 while curl itself still exits 0. Tests should therefore treat
+    explicit deny statuses as blocked, not as successful outbound access.
+    """
+    if denied_http_statuses is None:
+        denied_http_statuses = {401, 403, 407}
+
+    curl_exit = extract_tagged_int(output, "CURL_EXIT")
+    http_status = extract_tagged_int(output, "HTTP_STATUS")
+
+    if curl_exit is not None and curl_exit != 0:
+        return True
+    return http_status in denied_http_statuses
+
+
+def parse_openshell_provider_output(output: str) -> OpenShellProvider:
+    """Parse the current human-readable ``openshell provider get`` output."""
+    clean = strip_ansi(output)
+    fields: dict[str, str | None] = {"base_url": None}
+
+    for raw_line in clean.splitlines():
+        line = raw_line.strip()
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "name":
+            fields["name"] = value
+        elif key == "type":
+            fields["type"] = value
+        elif key in {"base url", "base_url"}:
+            fields["base_url"] = value
+
+    return OpenShellProvider.model_validate(fields)
+
+
+def parse_openshell_inference_route_output(output: str) -> OpenShellInferenceRoute:
+    """Parse the current human-readable ``openshell inference get`` output."""
+    clean = strip_ansi(output)
+    section: str | None = None
+    fields: dict[str, str] = {}
+
+    for raw_line in clean.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "Gateway inference:":
+            section = "gateway"
+            continue
+        if line == "System inference:":
+            section = "system"
+            continue
+        if section != "gateway" or ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "provider":
+            fields["provider"] = value
+        elif key == "model":
+            fields["model"] = value
+
+    return OpenShellInferenceRoute.model_validate(fields)
 
 
 # ---------------------------------------------------------------------------

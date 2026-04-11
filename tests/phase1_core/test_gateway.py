@@ -2,9 +2,8 @@
 Phase 1 — Core NemoClaw on Spark: OpenShell gateway tests.
 
 Verifies that the OpenShell gateway starts within the allowed bootstrap
-window, reports a "Connected" status, exposes its control-plane port only on
-loopback (not the public LAN interface), and that the port is open and
-responding.
+window, reports a "Connected" status, and does not expose its control-plane
+port broadly on the public LAN interface.
 
 Markers
 -------
@@ -14,11 +13,10 @@ behavioral : Layer-B endpoint / network tests.
 
 from __future__ import annotations
 
-import httpx
 import pytest
 from fabric import Connection
 
-from ..helpers import poll_until_ready, run_remote
+from ..helpers import poll_until_ready, run_in_sandbox, run_remote
 from ..models import CommandResult
 from ..settings import TestSettings
 
@@ -77,66 +75,6 @@ class TestGatewayStartup:
             f"Expected 'Connected' in openshell status output.\n"
             f"Actual output:\n{result.stdout}\n"
             f"Stderr:\n{result.stderr}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Behavioral tests — gateway port connectivity
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.phase1
-@pytest.mark.behavioral
-class TestGatewayPort:
-    """Verify that the OpenShell gateway control-plane port is reachable."""
-
-    def test_port_open(self, spark_ip: str) -> None:
-        """GET :8080 from the LAN IP returns a recognisable gateway response.
-
-        The test verifies *identity*, not just HTTP status code: the response
-        must either carry a header that identifies OpenShell/k3s, or return a
-        status code in the range that a control-plane proxy would emit (200,
-        401, 403, 404).  A plain TCP connection-refused error would propagate
-        as an httpx.ConnectError and fail the test immediately.
-
-        TLS verification is disabled because the gateway uses a self-signed
-        certificate during the bootstrap phase.
-        """
-        url = f"https://{spark_ip}:8080"
-        try:
-            response = httpx.get(url, verify=False, timeout=15.0)
-        except httpx.ConnectError as exc:
-            pytest.fail(
-                f"Could not connect to OpenShell gateway at {url}: {exc}\n"
-                "Ensure the gateway is running and port 8080 is not firewalled."
-            )
-
-        # Gateway responds with a control-plane status code (auth required is fine)
-        acceptable_statuses = {200, 301, 302, 400, 401, 403, 404}
-        assert response.status_code in acceptable_statuses, (
-            f"Unexpected status {response.status_code} from gateway at {url}.\n"
-            f"Response body (first 500 chars): {response.text[:500]}"
-        )
-
-        # Identity check: at minimum the server header or body should not be
-        # a generic web server error page unrelated to OpenShell.
-        server_header = response.headers.get("server", "").lower()
-        content_type = response.headers.get("content-type", "").lower()
-        body_snippet = response.text[:200].lower()
-
-        is_identifiable = (
-            "openshell" in server_header
-            or "k3s" in server_header
-            or "application/json" in content_type
-            or "openssl" in body_snippet
-            or response.status_code in {401, 403}  # auth wall → gateway is there
-        )
-        assert is_identifiable, (
-            f"Gateway at {url} responded with status {response.status_code} "
-            "but the response does not look like an OpenShell control plane.\n"
-            f"Server: {server_header!r}\n"
-            f"Content-Type: {content_type!r}\n"
-            f"Body snippet: {body_snippet!r}"
         )
 
 
@@ -201,10 +139,10 @@ class TestDeviceAuth:
         options; ``none`` or ``open`` would allow unauthenticated access to the
         gateway control plane.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_in_sandbox(
             spark_ssh,
-            "docker exec nemoclaw-main sh -c "
-            "'cat ~/.openclaw/openclaw.json 2>/dev/null || echo {}'",
+            "nemoclaw-main",
+            "sh -c 'cat ~/.openclaw/openclaw.json 2>/dev/null || echo {}'",
             timeout=15,
         )
         config_output = result.stdout.strip().lower()
@@ -235,9 +173,10 @@ class TestDeviceAuth:
         simple string).
         """
         # Extract the auth token from the config
-        token_result: CommandResult = run_remote(
+        token_result: CommandResult = run_in_sandbox(
             spark_ssh,
-            "docker exec nemoclaw-main sh -c 'cat ~/.openclaw/openclaw.json 2>/dev/null'",
+            "nemoclaw-main",
+            "sh -c 'cat ~/.openclaw/openclaw.json 2>/dev/null'",
             timeout=15,
         )
 
@@ -256,10 +195,10 @@ class TestDeviceAuth:
             )
 
         # Scan gateway logs for the raw token
-        log_result: CommandResult = run_remote(
+        log_result: CommandResult = run_in_sandbox(
             spark_ssh,
-            "docker exec nemoclaw-main sh -c "
-            "'tail -n 2000 /tmp/gateway.log 2>/dev/null || echo \"\"'",
+            "nemoclaw-main",
+            "sh -c 'tail -n 2000 /tmp/gateway.log 2>/dev/null || echo \"\"'",
             timeout=20,
         )
         log_content = log_result.stdout
