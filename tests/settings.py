@@ -2,12 +2,14 @@
 NemoClaw test suite settings.
 
 Loaded from environment variables and an optional .env file in the tests/
-directory (or any parent). All fields have sensible defaults matching the
-live three-node deployment:
+directory (or any parent). The default supported topology is a two-node
+deployment:
 
   spark-caeb.local  — DGX Spark, primary inference + NemoClaw host
   mac-studio.local  — Mac Studio, secondary inference + dev workstation
-  raspi.local       — Raspberry Pi, infrastructure plane
+
+The Raspberry Pi infrastructure node remains configurable, but is disabled by
+default and treated as an optional legacy topology.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from __future__ import annotations
 from ipaddress import IPv4Address
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -24,6 +26,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _TESTS_DIR = Path(__file__).parent
 _ENV_FILE = _TESTS_DIR / ".env"
+
+
+def _default_sync_key_candidates() -> list[Path]:
+    """Return plausible NVIDIA Sync private-key paths on Linux and macOS."""
+    home = Path.home()
+    return [
+        home / ".config/NVIDIA/Sync/config/nvsync.key",
+        home / "Library/Application Support/NVIDIA/Sync/config/nvsync.key",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +54,26 @@ class HostSettings(BaseSettings):
     hostname: str
     ip: IPv4Address
     user: str = "carlos"
+    enabled: bool = Field(
+        default=True,
+        description="Whether this host participates in the active validation topology.",
+    )
     ssh_key: Path | None = Field(
         default=None,
         description="Path to the SSH private key used to connect to this host. "
         "Falls back to ssh-agent / ~/.ssh/id_* when None.",
     )
+
+    @model_validator(mode="after")
+    def _populate_default_ssh_key(self) -> HostSettings:
+        """Use the local NVIDIA Sync key automatically when present."""
+        if self.ssh_key is not None:
+            return self
+        for candidate in _default_sync_key_candidates():
+            if candidate.is_file():
+                self.ssh_key = candidate
+                break
+        return self
 
     # ------------------------------------------------------------------
     # Convenience helpers used by fixtures
@@ -170,6 +196,11 @@ class PiSettings(HostSettings):
     hostname: str = "raspi.local"
     ip: IPv4Address = IPv4Address("192.168.1.30")
     user: str = "carlos"
+    enabled: bool = Field(
+        default=False,
+        validation_alias="PI_ENABLED",
+        description="Whether the Raspberry Pi topology is part of the active deployment.",
+    )
     ssh_key: Path | None = None
 
     # LiteLLM proxy
@@ -247,10 +278,20 @@ class TestSettings(BaseSettings):
         validation_alias="TAILSCALE_MAC_IP",
         description="Tailscale IP of mac-studio",
     )
+    spark_tailscale_serve_url: str | None = Field(
+        default=None,
+        validation_alias="SPARK_TAILSCALE_SERVE_URL",
+        description="Optional Tailscale Serve URL for the Spark-hosted NemoClaw UI.",
+    )
     tailscale_pi_ip: IPv4Address | None = Field(
         default=None,
         validation_alias="TAILSCALE_PI_IP",
         description="Tailscale IP of raspi",
+    )
+    spark_remote_ui_url: str | None = Field(
+        default=None,
+        validation_alias="SPARK_REMOTE_UI_URL",
+        description="Preferred remote UI URL for the Spark-hosted app when exposed via Tailscale Serve.",
     )
 
     # ---- Global timeouts / retries ----
@@ -270,16 +311,26 @@ class TestSettings(BaseSettings):
     @property
     def all_hosts(self) -> list[HostSettings]:
         """Return every host settings object for iteration."""
-        return [self.spark, self.mac, self.pi]
+        hosts: list[HostSettings] = [self.spark, self.mac]
+        if self.pi.enabled:
+            hosts.append(self.pi)
+        return hosts
+
+    @property
+    def active_hosts(self) -> list[HostSettings]:
+        """Return only hosts that are enabled in the current topology."""
+        return [host for host in self.all_hosts if host.enabled]
 
     @property
     def tailscale_ips(self) -> dict[str, IPv4Address | None]:
         """Return a mapping of node name -> Tailscale IP."""
-        return {
+        ips: dict[str, IPv4Address | None] = {
             "spark": self.tailscale_spark_ip or self.spark.tailscale_ip,
             "mac": self.tailscale_mac_ip or self.mac.tailscale_ip,
-            "pi": self.tailscale_pi_ip or self.pi.tailscale_ip,
         }
+        if self.pi.enabled:
+            ips["pi"] = self.tailscale_pi_ip or self.pi.tailscale_ip
+        return ips
 
     def has_api_key(self, provider: str) -> bool:
         """Return True when the named provider's API key is configured.

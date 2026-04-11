@@ -21,11 +21,14 @@ test_settings: TestSettings — provides API key availability checks.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fabric import Connection
 
 from ..helpers import run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command, strip_ansi
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -51,43 +54,45 @@ class TestGeminiSandbox:
     """
 
     def test_sandbox_exists(self, spark_ssh: Connection) -> None:
-        """The gemini-dev sandbox container exists and is in a running state.
+        """The gemini-dev sandbox exists and reports Ready in OpenShell.
 
-        Queries Docker for the exact container name ``gemini-dev`` and asserts
-        that the status field is ``running``.  A missing or exited container
-        means the sandbox was never created or failed on start, preventing all
-        Gemini CLI operations.
+        Queries the supported OpenShell sandbox metadata command and asserts
+        that the sandbox descriptor reports ``Phase: Ready``. A missing or
+        non-ready sandbox would prevent Gemini CLI operations.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"docker inspect --format '{{{{.State.Status}}}}' {_SANDBOX_NAME} 2>&1",
+            f"openshell sandbox get {_SANDBOX_NAME} 2>&1",
             timeout=15,
         )
         assert result.return_code == 0, (
-            f"docker inspect {_SANDBOX_NAME!r} failed (exit {result.return_code}). "
-            "The sandbox container may not exist. "
+            f"'openshell sandbox get {_SANDBOX_NAME}' failed (exit {result.return_code}). "
+            "The sandbox metadata may not exist or the gateway may be down. "
             f"Create it via: openshell sandbox create {_SANDBOX_NAME}. "
             f"stderr: {result.stderr!r}"
         )
-        status = result.stdout.strip().lower()
-        assert status == "running", (
-            f"Sandbox {_SANDBOX_NAME!r} exists but is not running (status={status!r}). "
-            "Restart it: openshell sandbox start gemini-dev, or check logs: "
-            f"docker logs {_SANDBOX_NAME} --tail=50"
+        status = strip_ansi(result.stdout)
+        assert re.search(r"^\s*Name:\s*gemini-dev\s*$", status, re.MULTILINE), (
+            f"Sandbox {_SANDBOX_NAME!r} descriptor does not include the expected name.\n"
+            f"Full output:\n{status}"
+        )
+        assert re.search(r"^\s*Phase:\s*Ready\s*$", status, re.MULTILINE), (
+            f"Sandbox {_SANDBOX_NAME!r} is not Ready in OpenShell.\nFull output:\n{status}"
         )
 
     def test_gemini_binary_exists(self, spark_ssh: Connection) -> None:
         """The ``gemini`` CLI binary is available on PATH inside the sandbox.
 
-        Runs ``which gemini`` inside the sandbox via ``docker exec``.  The
-        binary must be present for OpenShell to dispatch Gemini CLI agent
-        tasks.  A missing binary means the sandbox image is incomplete or the
-        Gemini CLI package was not installed.
+        Runs ``which gemini`` inside the sandbox via the supported OpenShell
+        sandbox SSH config path. The binary must be present for OpenShell to
+        dispatch Gemini CLI agent tasks. A missing binary means the sandbox
+        image is incomplete or the Gemini CLI package was not installed.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {_SANDBOX_NAME} which gemini 2>&1",
-            timeout=15,
+            _SANDBOX_NAME,
+            "which gemini",
+            timeout=20,
         )
         assert result.return_code == 0, (
             f"'which gemini' inside sandbox {_SANDBOX_NAME!r} returned exit "
@@ -99,38 +104,40 @@ class TestGeminiSandbox:
         assert binary_path != "", (
             "'which gemini' exited 0 but produced no output inside the sandbox. "
             "The binary may be a broken symlink. "
-            f"Inspect: docker exec {_SANDBOX_NAME} ls -la $(which gemini)"
+            f"Inspect with: openshell sandbox ssh-config {_SANDBOX_NAME}"
         )
 
     def test_google_api_policy_present(self, spark_ssh: Connection) -> None:
         """The Google API egress policy allows calls to generativelanguage.googleapis.com.
 
-        Reads the OpenShell network-egress policy for the gemini-dev sandbox
-        and asserts that ``generativelanguage.googleapis.com`` appears in the
-        allow-list.  Without this entry the sandbox's default-deny firewall
-        will silently drop every Gemini API call, causing the agent to fail
-        with a connection-refused error that is difficult to distinguish from
-        an authentication failure.
+        Reads the live OpenShell policy for the gemini-dev sandbox and
+        asserts that ``generativelanguage.googleapis.com`` appears in the
+        active allow-list. Without this entry the sandbox's default-deny
+        firewall will silently drop every Gemini API call, causing the agent
+        to fail with a connection-refused error that is difficult to
+        distinguish from an authentication failure.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"openshell sandbox policy show {_SANDBOX_NAME} 2>&1",
+            f"openshell policy get {_SANDBOX_NAME} --full 2>&1",
             timeout=20,
         )
         assert result.return_code == 0, (
-            f"'openshell sandbox policy show {_SANDBOX_NAME}' failed "
+            f"'openshell policy get {_SANDBOX_NAME} --full' failed "
             f"(exit {result.return_code}). "
             "Cannot verify egress policy without reading it. "
             f"stderr: {result.stderr!r}"
         )
-        policy_output = result.stdout
+        policy_output = strip_ansi(result.stdout)
+        assert policy_output.strip(), (
+            f"'openshell policy get {_SANDBOX_NAME} --full' produced no output."
+        )
         assert _EXPECTED_POLICY_DOMAIN in policy_output, (
             f"Egress allow-list for {_SANDBOX_NAME!r} does not contain "
             f"'{_EXPECTED_POLICY_DOMAIN}'. "
             "Without this entry every Gemini API call will be blocked at the "
             "sandbox firewall. "
-            "Add it: openshell sandbox policy allow gemini-dev "
-            "generativelanguage.googleapis.com:443. "
+            "Add it with: openshell policy set gemini-dev --policy <policy.yaml>. "
             f"Current policy output:\n{policy_output}"
         )
 
@@ -153,10 +160,11 @@ class TestGeminiNegative:
     def test_gemini_without_api_key_fails(self, spark_ssh: Connection) -> None:
         """Gemini CLI exits non-zero with a clear auth error when GEMINI_API_KEY is unset.
 
-        Invokes the ``gemini`` binary inside the sandbox with the
+        Invokes the ``gemini`` binary inside the sandbox via the supported
+        ``openshell sandbox ssh-config`` path with the
         ``GEMINI_API_KEY`` environment variable explicitly cleared, then
         requests a trivial non-interactive operation (e.g. ``--version`` or
-        ``--help``).  If the version/help flag does not trigger auth, we also
+        ``--help``). If the version/help flag does not trigger auth, we also
         try a minimal prompt invocation with a very short timeout.
 
         The assertion is that any API-touching operation either:
@@ -169,16 +177,10 @@ class TestGeminiNegative:
         """
         # Clear the API key and attempt a version query (safe, no network call).
         # Then fall through to a stub prompt if --version exits 0 silently.
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            (
-                f"docker exec "
-                f"-e GEMINI_API_KEY= "
-                f"-e GOOGLE_API_KEY= "
-                f"{_SANDBOX_NAME} "
-                # Try --version first; if unavailable, attempt --help
-                "sh -c 'gemini --version 2>&1 || gemini --help 2>&1' || true"
-            ),
+            _SANDBOX_NAME,
+            "sh -c 'GEMINI_API_KEY= GOOGLE_API_KEY= gemini --version 2>&1 || gemini --help 2>&1' || true",
             timeout=20,
         )
         combined_output = (result.stdout + " " + result.stderr).lower()
@@ -196,7 +198,8 @@ class TestGeminiNegative:
             # operation (--version / --help) that does not touch the API.
             # In that case, the output should contain version or usage info.
             benign_indicators = {"version", "usage", "help", "gemini"}
-            assert any(ind in combined_output for ind in benign_indicators), (
+            looks_like_semver = bool(re.search(r"\b\d+\.\d+\.\d+\b", combined_output))
+            assert any(ind in combined_output for ind in benign_indicators) or looks_like_semver, (
                 "Gemini CLI exited 0 with GEMINI_API_KEY unset and the output "
                 "does not look like a version or help message. "
                 "This could indicate the tool silently ignored the missing key. "

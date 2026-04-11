@@ -7,7 +7,7 @@ protocols can reach external endpoints).
 
 Extends the single-sandbox egress test in ``test_sandbox_isolation.py`` to
 cover all four sandboxes and adds checks for policy configuration via
-``openshell sandbox policy show``.
+``openshell policy get <sandbox> --full``.
 
 Markers
 -------
@@ -21,14 +21,14 @@ spark_ssh : fabric.Connection — live SSH connection to the DGX Spark node.
 
 from __future__ import annotations
 
-import contextlib
 import warnings
 
 import pytest
 from fabric import Connection
 
-from ..helpers import run_remote
+from ..helpers import curl_attempt_was_blocked, run_remote
 from ..models import CommandResult
+from ._openshell_cli import run_sandbox_command, strip_ansi
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -68,25 +68,32 @@ class TestNetworkPolicy:
     def test_sandbox_has_egress_policy(self, spark_ssh: Connection, sandbox_name: str) -> None:
         """Each sandbox has a non-empty network policy configured in OpenShell.
 
-        Runs ``openshell sandbox policy show <name>`` and asserts that the
-        output contains policy rules rather than being empty or reporting
-        "no policy."  An empty policy means the sandbox has unrestricted
-        egress, which violates the security model.
+        Runs ``openshell policy get <name> --full`` and asserts that the
+        output contains policy rules rather than being empty. An empty policy
+        means the sandbox has unrestricted egress, which violates the
+        security model.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"openshell sandbox policy show {sandbox_name} 2>&1",
+            f"openshell policy get {sandbox_name} --full 2>&1",
             timeout=20,
         )
-        output = result.stdout.strip()
+        assert result.return_code == 0, (
+            f"'openshell policy get {sandbox_name} --full' failed "
+            f"(exit {result.return_code}). "
+            "Cannot verify egress policy without reading it. "
+            f"stderr: {result.stderr!r}"
+        )
+        output = strip_ansi(result.stdout).strip()
 
-        # "no policy" or empty output means no egress restrictions
-        assert output and "no policy" not in output.lower(), (
+        assert output, (
             f"Sandbox {sandbox_name!r} has no network policy configured. "
-            f"Output: {output!r}. "
             "Without a policy, the sandbox has unrestricted egress to the internet. "
-            "Fix: apply a default-deny policy via "
-            f"'openshell sandbox policy-add {sandbox_name} default-deny'."
+            f"Current output: {output!r}"
+        )
+        assert "network_policies:" in output, (
+            f"Sandbox {sandbox_name!r} policy output does not include a network_policies section. "
+            f"Output: {output!r}"
         )
 
     def test_nemoclaw_main_no_cloud_api_egress(self, spark_ssh: Connection) -> None:
@@ -101,34 +108,28 @@ class TestNetworkPolicy:
 
         A successful curl (exit 0) is the failure mode.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec nemoclaw-main curl --max-time 3 -sf {_CLOUD_API_URL} 2>&1; echo EXIT:$?",
+            "nemoclaw-main",
+            (
+                "sh -c '"
+                "tmp=$(mktemp); "
+                f'status=$(curl --silent --output "$tmp" --write-out "%{{http_code}}" '
+                f"--max-time 3 {_CLOUD_API_URL} 2>/dev/null); "
+                "rc=$?; "
+                'printf "CURL_EXIT:%s HTTP_STATUS:%s\\n" "$rc" "$status"; '
+                'cat "$tmp"; rm -f "$tmp"\''
+            ),
             timeout=20,
         )
         combined = result.stdout + " " + result.stderr
 
-        exit_code: int | None = None
-        for part in combined.split():
-            if part.startswith("EXIT:"):
-                with contextlib.suppress(ValueError):
-                    exit_code = int(part.split(":", 1)[1])
-                break
-
-        if exit_code is not None:
-            assert exit_code != 0, (
-                f"nemoclaw-main was able to reach {_CLOUD_API_URL!r} (curl exit 0). "
-                "The local sandbox should not have direct access to cloud APIs. "
-                "Fix: ensure the default-deny egress policy blocks outbound HTTPS "
-                "to cloud API endpoints from nemoclaw-main."
-            )
-        else:
-            # Could not parse exit code — check for success indicators
-            success_indicators = {"200", "301", "302", "<!doctype", "<html", "json"}
-            assert not any(ind in combined.lower() for ind in success_indicators), (
-                f"curl to {_CLOUD_API_URL!r} from nemoclaw-main appears to have "
-                f"succeeded. Output: {combined[:300]!r}"
-            )
+        assert curl_attempt_was_blocked(combined), (
+            f"nemoclaw-main was able to reach {_CLOUD_API_URL!r} without the "
+            "request being denied by the sandbox egress path. "
+            "The local sandbox should not have direct access to cloud APIs. "
+            f"Observed output: {combined[:300]!r}"
+        )
 
     def test_default_deny_all_sandboxes(self, spark_ssh: Connection, sandbox_name: str) -> None:
         """Outbound HTTP to example.com is blocked from every sandbox.
@@ -137,35 +138,27 @@ class TestNetworkPolicy:
         four sandboxes.  Under the default-deny policy, curl to example.com
         should time out or be refused (non-zero exit code).
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_sandbox_command(
             spark_ssh,
-            f"docker exec {sandbox_name} "
-            f"curl --silent --max-time 5 {_BLOCKED_EXTERNAL_URL} 2>&1"
-            f"; echo EXIT:$?",
+            sandbox_name,
+            (
+                "sh -c '"
+                "tmp=$(mktemp); "
+                f'status=$(curl --silent --output "$tmp" --write-out "%{{http_code}}" '
+                f"--max-time 5 {_BLOCKED_EXTERNAL_URL} 2>/dev/null); "
+                "rc=$?; "
+                'printf "CURL_EXIT:%s HTTP_STATUS:%s\\n" "$rc" "$status"; '
+                'cat "$tmp"; rm -f "$tmp"\''
+            ),
             timeout=20,
         )
         combined = result.stdout + " " + result.stderr
 
-        exit_code: int | None = None
-        for part in combined.split():
-            if part.startswith("EXIT:"):
-                with contextlib.suppress(ValueError):
-                    exit_code = int(part.split(":", 1)[1])
-                break
-
-        if exit_code is not None:
-            assert exit_code != 0, (
-                f"curl to {_BLOCKED_EXTERNAL_URL!r} from {sandbox_name!r} "
-                f"succeeded (exit 0). The default-deny egress policy is not "
-                "enforced for this sandbox. "
-                f"Fix: openshell sandbox policy-add {sandbox_name} default-deny"
-            )
-        else:
-            success_indicators = {"200 ok", "301", "302", "<!doctype", "<html"}
-            assert not any(ind in combined.lower() for ind in success_indicators), (
-                f"curl to {_BLOCKED_EXTERNAL_URL!r} from {sandbox_name!r} "
-                f"appears to have succeeded. Output: {combined[:300]!r}"
-            )
+        assert curl_attempt_was_blocked(combined), (
+            f"curl to {_BLOCKED_EXTERNAL_URL!r} from {sandbox_name!r} was not "
+            "blocked by the default-deny egress policy. "
+            f"Observed output: {combined[:300]!r}"
+        )
 
     def test_policy_output_contains_binary_scope_or_l7(
         self, spark_ssh: Connection, sandbox_name: str
@@ -183,10 +176,16 @@ class TestNetworkPolicy:
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"openshell sandbox policy show {sandbox_name} 2>&1",
+            f"openshell policy get {sandbox_name} --full 2>&1",
             timeout=20,
         )
-        output = result.stdout.lower()
+        assert result.return_code == 0, (
+            f"'openshell policy get {sandbox_name} --full' failed "
+            f"(exit {result.return_code}). "
+            "Cannot inspect policy output. "
+            f"stderr: {result.stderr!r}"
+        )
+        output = strip_ansi(result.stdout).lower()
 
         binary_scope_indicators = {"binary", "program", "executable", "process"}
         l7_indicators = {"protocol", "rest", "grpc", "http", "l7"}

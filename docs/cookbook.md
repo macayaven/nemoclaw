@@ -281,10 +281,11 @@ openclaw tui
 
 **Web UI location:** Dashboard at `https://spark-caeb.tail48bab7.ts.net/` → click the "+" button in the sessions sidebar (top-left panel) to open a new chat thread.
 
-Alternatively, use the token URL to open a fresh session directly:
+Alternatively, open `https://spark-caeb.tail48bab7.ts.net/`, click **Connect**, then approve the pending device request from the Spark host:
 
-```
-https://spark-caeb.tail48bab7.ts.net/#token=7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634
+```bash
+make devices-list
+make approve-latest-device
 ```
 
 **Verify:**
@@ -511,16 +512,17 @@ openclaw node stop
 openclaw node start
 ```
 
-Step 4 — Add the gateway token to the launchd plist so it survives reboots:
+Step 4 — If you intentionally want shared-secret fallback auth for the node host, add the live gateway token to the launchd plist:
 
 ```bash
 ssh carlos@100.116.228.36
+TOKEN=$$(cd ~/workspace/nemoclaw && make --no-print-directory gateway-token)
 python3 -c "
 import plistlib
 plist_path = '$HOME/Library/LaunchAgents/ai.openclaw.node.plist'
 with open(plist_path, 'rb') as f:
     plist = plistlib.load(f)
-plist.setdefault('EnvironmentVariables', {})['OPENCLAW_GATEWAY_TOKEN'] = '7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634'
+plist.setdefault('EnvironmentVariables', {})['OPENCLAW_GATEWAY_TOKEN'] = '$$TOKEN'
 with open(plist_path, 'wb') as f:
     plistlib.dump(plist, f)
 "
@@ -555,8 +557,8 @@ openclaw nodes list
 
 1. Install the OpenClaw iOS app via TestFlight (official) or GoClaw/ClawOn from the App Store.
 2. In the app settings, enter the gateway URL: `https://spark-caeb.tail48bab7.ts.net/`
-3. When prompted for a token, enter: `7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634`
-4. The app will attempt to pair — you must approve from the sandbox.
+3. Leave the token empty unless you intentionally want shared-secret fallback auth.
+4. The app will attempt to pair — approve it from the sandbox.
 
 **CLI command (approve pairing on Spark):**
 
@@ -937,8 +939,15 @@ curl -s http://127.0.0.1:18789/health
 
 **Steps:**
 
-1. Open `https://spark-caeb.tail48bab7.ts.net/#token=7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634` in your browser.
-2. Click the gear icon (Settings) in the top-right or sidebar.
+1. Open `https://spark-caeb.tail48bab7.ts.net/` in your browser.
+2. Click **Connect**.
+3. Approve the pending browser request from the Spark host:
+
+```bash
+make devices-list
+make approve-latest-device
+```
+4. Click the gear icon (Settings) in the top-right or sidebar.
 
 Available settings panels:
 
@@ -1472,6 +1481,16 @@ openshell sandbox connect codex-dev    # → codex login for OpenAI
 openshell sandbox connect gemini-dev   # → browser login for Google
 ```
 
+Recommended follow-up: store the resulting auth blobs in the Spark's local
+`pass` store so sandbox recreation does not require repeating every browser
+login:
+
+```bash
+./scripts/agent-pass-vault.sh capture claude codex gemini opencode
+```
+
+See [agent-auth-vault.md](agent-auth-vault.md).
+
 ---
 
 ## Category 12: Retired Raspberry Pi Components
@@ -1484,11 +1503,68 @@ openshell sandbox connect gemini-dev   # → browser login for Google
 
 ## Category 13: Channels (Chat from Anywhere)
 
-### Recipe 38: Add a Telegram Channel and Chat with Your Agent
+### Recipe 38: Add a WhatsApp Channel and Chat with Your Agent
 
 **What channels are:** Channels let you message your NemoClaw agent from apps you already use — Telegram, Discord, WhatsApp, Slack, etc. The agent responds using whatever model is active (Nemotron, Claude, etc.).
 
-**Why:** Instead of opening the browser dashboard every time, you just message your Telegram bot from your phone. The agent has full context, skills, and model access.
+**Why:** In this deployment, WhatsApp is the main ingress channel. Instead of opening the browser dashboard every time, you message the assistant from your phone and keep the browser UI for operator control and debugging.
+
+**How NemoClaw wires it:** The `nemoclaw-main` sandbox runs OpenClaw under the named profile `native`. That profile enables the bundled `whatsapp` and `telegram` plugins and keeps channel state under `/sandbox/.openclaw-native/` instead of the root-owned `~/.openclaw/` path.
+
+**Step-by-step: WhatsApp**
+
+1. **Apply the required network policy on the Spark host:**
+```bash
+make policy-whatsapp
+```
+
+2. **Enable the native WhatsApp channel in the named OpenClaw profile:**
+```bash
+make whatsapp-setup
+```
+
+3. **Open the QR login flow and scan it with your phone:**
+```bash
+make whatsapp-login
+```
+
+Scan the QR code in WhatsApp:
+
+- WhatsApp -> Settings -> Linked Devices -> Link a Device
+
+4. **Verify the channel is live:**
+```bash
+make channels-status
+# Expected: WhatsApp account "default" shows configured and connected
+```
+
+If replies time out before the agent answers, re-apply the managed profile so the assistant uses the longer official per-turn timeout and then restart the sandboxed gateway:
+
+```bash
+make setup-openclaw-profile
+make restart-openclaw
+```
+
+5. **Start chatting:**
+- Send a message to the linked WhatsApp account
+- The OpenClaw gateway routes it to the `main` agent inside `nemoclaw-main`
+- Replies come back through the same WhatsApp thread
+
+**What you can do through WhatsApp:**
+- send text messages to the assistant
+- send images once you enable the relevant media tools/model path
+- later receive speech replies once Kokoro is deployed on the Mac
+
+**Troubleshooting:**
+- if the QR expires, rerun `make whatsapp-login`
+- if the channel cannot connect, re-run `make policy-whatsapp` and then inspect `make channels-status`
+- if you rebuilt the sandbox, rerun `make setup-openclaw-profile` before logging in again
+
+See [personal-assistant-profile.md](personal-assistant-profile.md) for the recommended default tool/skill posture of the WhatsApp-facing assistant.
+
+### Recipe 38b: Add a Telegram Channel as a Secondary Ingress
+
+Telegram remains useful as a secondary or fallback channel, but it is no longer the primary ingress path.
 
 **Step-by-step: Telegram bot**
 
@@ -1500,16 +1576,13 @@ openshell sandbox connect gemini-dev   # → browser login for Google
    - BotFather gives you a token like `7123456789:AAH...`
    - Save this token
 
-2. **Configure OpenClaw (inside sandbox):**
+2. **Apply the Telegram network policy and register the bot:**
 ```bash
-openshell sandbox connect nemoclaw-main
+make policy-telegram
+make telegram-setup TELEGRAM_BOT_TOKEN=7123456789:AAHxxxxxxxxx
 
-# Add the Telegram channel
-openclaw channels add telegram --token 7123456789:AAHxxxxxxxxx
-
-# Verify
-openclaw channels list
-# Should show: telegram | Configured: Yes | Running: Yes
+make channels-status
+# Should show Telegram as configured and running
 ```
 
 3. **Start chatting:**
@@ -1520,7 +1593,7 @@ openclaw channels list
 
 4. **Pairing (first time):**
    - The bot may send you a pairing code
-   - Inside the sandbox: `openclaw pairing approve <code>`
+   - Inside the sandbox profile: `openclaw --profile native pairing approve <code>`
    - After approval, DMs work without codes
 
 **What you can do through Telegram:**
@@ -1531,7 +1604,7 @@ openclaw channels list
 
 **Verify:**
 ```bash
-openclaw status
+openclaw --profile native status
 # Channels section should show telegram as Running
 ```
 
@@ -1549,63 +1622,25 @@ openclaw channels add discord --token YOUR_DISCORD_BOT_TOKEN
 # Mention it or DM it to chat with the agent
 ```
 
-### Recipe 38c: Add a WhatsApp Channel
-
-WhatsApp integration lets you message your NemoClaw agent from WhatsApp on your phone. Uses the WhatsApp Web bridge inside the sandbox.
-
-**Using the Makefile (recommended):**
-
-```bash
-# 1. Add WhatsApp network policy to allow WhatsApp servers
-make policy-whatsapp
-
-# 2. Run the WhatsApp setup wizard (will show a QR code)
-make whatsapp-setup
-
-# 3. Scan the QR code with WhatsApp on your phone
-#    (WhatsApp → Settings → Linked Devices → Link a Device)
-
-# 4. Check channel status
-make channels-status
-# Expected: whatsapp channel shows "connected"
-```
-
-**Manual steps (inside sandbox):**
-
-```bash
-openshell sandbox connect nemoclaw-main
-openclaw channels add whatsapp
-# Scan the QR code displayed in terminal with your phone
-```
-
-**What you can do through WhatsApp:**
-- Send text messages to the agent (the agent responds using the active model)
-- Send voice messages (if speech-to-text is configured)
-- The agent can send images and formatted text back
-
-**Troubleshooting:**
-- If the QR code expires, run `make whatsapp-setup` again
-- WhatsApp sessions expire after ~14 days of inactivity; re-scan to reconnect
-- Ensure the nemoclaw-main sandbox has the `whatsapp` network policy applied
-
-### Recipe 38d: Channel Setup via Makefile
+### Recipe 38c: Channel Setup via Makefile
 
 All channel operations have corresponding `make` targets for convenience:
 
 ```bash
-# Telegram
-make policy-telegram     # Add network policy for Telegram servers
-make telegram-setup      # Add Telegram channel to OpenClaw
-
 # WhatsApp
 make policy-whatsapp     # Add network policy for WhatsApp servers
-make whatsapp-setup      # Add WhatsApp channel to OpenClaw
+make whatsapp-setup      # Enable the native WhatsApp plugin-backed channel
+make whatsapp-login      # Show the QR code and complete login
+
+# Telegram
+make policy-telegram     # Add network policy for Telegram servers
+make telegram-setup      # Add Telegram channel to OpenClaw (requires TELEGRAM_BOT_TOKEN)
 
 # Status
 make channels-status     # Show all channel statuses
 ```
 
-### Recipe 38e: What Channels Are NOT For
+### Recipe 38d: What Channels Are NOT For
 
 Channels are for **you** to reach the agent. They are NOT for:
 - Agent-to-agent communication (use the Orchestrator for that)
@@ -1850,7 +1885,7 @@ So you can have Nemotron on OpenClaw, Gemma 4 on Codex (via Mac), Claude on Clau
 | Start a fresh conversation | 7 | `openclaw sessions new --name <name>` or `/new` in TUI |
 | Resume a past conversation | 8 | `openclaw sessions resume <name>` |
 | Delete old sessions | 9 | `openclaw sessions prune --older-than 7d` |
-| Add Telegram to the agent | 10 | `openclaw channels add telegram --token <BOT_TOKEN>` |
+| Add Telegram to the agent | 10 | `make telegram-setup TELEGRAM_BOT_TOKEN=<BOT_TOKEN>` |
 | Add Discord to the agent | 11 | `openclaw channels add discord --token <BOT_TOKEN> --guild <ID> --channel <ID>` |
 | Remove a channel | 12 | `openclaw channels remove <channel-id>` |
 | Connect the Mac Studio node | 13 | `openclaw node install --host spark-caeb.tail48bab7.ts.net --port 443 --tls` (on Mac) |
@@ -1880,7 +1915,7 @@ So you can have Nemotron on OpenClaw, Gemma 4 on Codex (via Mac), Claude on Clau
 | Change Codex model independently | 44 | Edit `~/.codex/config.toml` inside codex-dev sandbox |
 | See who uses what model | 45 | See Recipe 45 summary table |
 | (Retired) Pi LiteLLM / Pi-hole / Uptime Kuma | 35-37 | Pi removed from topology — see Category 12 note |
-| Add a Telegram channel | 38 | `openclaw channels add telegram --token <BOT_TOKEN>` inside sandbox |
+| Add a WhatsApp channel | 38 | `make policy-whatsapp && make whatsapp-setup && make whatsapp-login` |
 | Chat with agent from Telegram | 38 | Message your bot → agent responds using Nemotron |
 | Use NemoClaw as VS Code coding assistant | 39 | Continue.dev extension → set endpoint to `http://100.93.220.104:11434/v1` |
 | Use NemoClaw as Cursor coding assistant | 40 | Cursor Settings → Models → add Ollama at `http://100.93.220.104:11434` |

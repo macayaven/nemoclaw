@@ -155,7 +155,7 @@ class TestRemoteAccess:
             parts = line.split()
             if len(parts) < 5:
                 continue
-            local_field = parts[4]  # e.g. "192.168.1.10:18789" or "0.0.0.0:18789"
+            local_field = parts[3]  # e.g. "127.0.0.1:18789" or "0.0.0.0:18789"
             # Split off the port part
             if ":" in local_field:
                 addr = local_field.rsplit(":", 1)[0]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.task_manager import Task, TaskManager
+from orchestrator.task_manager import Task, TaskManager, TaskResult
 
 pytestmark = pytest.mark.phase6
 
@@ -83,10 +83,10 @@ class TestTaskLifecycle:
         assert running_task.status == "running"
         assert running_task.completed_at is None
 
-        manager.update_task(task.id, "completed", result="done")
+        manager.update_task(task.id, "completed", result=TaskResult(output_text="done"))
         completed_task = manager.get_task(task.id)
         assert completed_task.status == "completed"
-        assert completed_task.result == "done"
+        assert completed_task.result == TaskResult(output_text="done")
         assert completed_task.completed_at is not None
 
     def test_failed_task_stores_result_message(self, tmp_path) -> None:
@@ -97,11 +97,11 @@ class TestTaskLifecycle:
             assigned_to="codex",
         )
 
-        manager.update_task(task.id, "failed", result="Agent sandbox unreachable")
+        manager.update_task(task.id, "failed", result=TaskResult(error="Agent sandbox unreachable"))
         failed_task = manager.get_task(task.id)
 
         assert failed_task.status == "failed"
-        assert failed_task.result == "Agent sandbox unreachable"
+        assert failed_task.result == TaskResult(error="Agent sandbox unreachable")
 
 
 class TestTaskPersistence:
@@ -182,7 +182,7 @@ class TestTaskQueries:
             prompt="Completed research",
             assigned_to="gemini",
         )
-        manager.update_task(completed.id, "completed", result="done")
+        manager.update_task(completed.id, "completed", result=TaskResult(output_text="done"))
 
         parent = manager.create_task(
             type="analysis",

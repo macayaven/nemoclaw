@@ -18,7 +18,7 @@ behavioral : Layer B — runtime security and network enforcement tests.
 Fixtures (from conftest.py)
 ---------------------------
 spark_ssh : fabric.Connection — live SSH connection to the DGX Spark node.
-mac_ip    : str — LAN/Tailscale IP address of the Mac Studio.
+test_settings: TestSettings — cluster topology and preferred hostnames/IPs.
 """
 
 from __future__ import annotations
@@ -28,8 +28,9 @@ import contextlib
 import pytest
 from fabric import Connection
 
-from ..helpers import run_remote
+from ..helpers import run_in_sandbox
 from ..models import CommandResult
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,7 +58,7 @@ class TestCrossMachineInference:
     """
 
     def test_mac_ollama_not_directly_reachable_from_sandbox(
-        self, spark_ssh: Connection, mac_ip: str
+        self, spark_ssh: Connection, test_settings: TestSettings
     ) -> None:
         """A sandbox cannot directly curl the Mac's Ollama port.
 
@@ -71,11 +72,13 @@ class TestCrossMachineInference:
         - Request audit logging
         - Binary-scoped network policies
         """
-        url = f"http://{mac_ip}:{_MAC_OLLAMA_PORT}/api/tags"
+        mac_host = str(test_settings.mac.tailscale_ip or test_settings.mac.hostname)
+        url = f"http://{mac_host}:{_MAC_OLLAMA_PORT}/api/tags"
 
-        result: CommandResult = run_remote(
+        result: CommandResult = run_in_sandbox(
             spark_ssh,
-            f"docker exec {_SANDBOX} curl --max-time 5 -sf {url} 2>&1; echo EXIT:$?",
+            _SANDBOX,
+            f"curl --max-time 5 -sf {url} 2>&1; echo EXIT:$?",
             timeout=20,
         )
         combined = result.stdout + " " + result.stderr
@@ -93,7 +96,7 @@ class TestCrossMachineInference:
                 f"{url!r} (curl exit 0). Direct access bypasses the gateway's "
                 "credential routing and audit logging. "
                 "Fix: ensure the sandbox egress policy blocks direct connections "
-                f"to {mac_ip}:{_MAC_OLLAMA_PORT}. Inference should flow through "
+                f"to {mac_host}:{_MAC_OLLAMA_PORT}. Inference should flow through "
                 "inference.local only."
             )
         else:
@@ -115,11 +118,10 @@ class TestCrossMachineInference:
         A successful DNS resolution and TCP connection to inference.local
         confirms the gateway's request interception is functional.
         """
-        result: CommandResult = run_remote(
+        result: CommandResult = run_in_sandbox(
             spark_ssh,
-            f"docker exec {_SANDBOX} "
-            "curl --max-time 5 -sf https://inference.local/v1/models 2>&1"
-            "; echo EXIT:$?",
+            _SANDBOX,
+            "curl --max-time 5 -sf https://inference.local/v1/models 2>&1; echo EXIT:$?",
             timeout=20,
         )
         combined = result.stdout + " " + result.stderr

@@ -32,13 +32,15 @@ When fully deployed you get: a browser-based chat interface at `https://spark-ca
 
 | What you want | How to access | Type | Where it runs |
 |---------------|---------------|------|---------------|
-| **Chat with Nemotron 120B** | Open `https://spark-caeb.tail48bab7.ts.net/` in any browser | Web UI | Spark sandbox |
-| **Chat with token auth** | `https://spark-caeb.tail48bab7.ts.net/#token=7cfb6a0efd17c1ea4f3cda511ffd5e1528ec013d9e8c6634` | Web UI | Spark sandbox |
+| **Chat with Nemotron 120B** | Open `https://spark-caeb.tail48bab7.ts.net/`, then approve the pending device once | Web UI | Spark sandbox |
+| **Chat from WhatsApp** | `make policy-whatsapp && make whatsapp-setup && make whatsapp-login` | Native OpenClaw channel | Spark sandbox |
+| **Print fallback gateway token** | `make gateway-token` | CLI | Spark sandbox |
 | **Use Claude Code** | `openshell sandbox connect claude-dev` on Spark terminal | Terminal | Spark sandbox |
 | **Use Codex** | `openshell sandbox connect codex-dev` on Spark terminal | Terminal | Spark sandbox |
 | **Use Gemini CLI** | `openshell sandbox connect gemini-dev` on Spark terminal | Terminal | Spark sandbox |
 | **Use OpenClaw TUI** | `openshell sandbox connect nemoclaw-main` then `openclaw tui` | Terminal | Spark sandbox |
 | **Monitor all agents** | `openshell term` on Spark terminal | Terminal TUI | Spark host |
+| **Check channel health** | `make channels-status` | CLI | Spark host |
 | **Switch models** | `openshell inference set --provider <name> --model <model>` | CLI | Spark host |
 | **Delegate to agents** | `python -m orchestrator delegate --agent codex --prompt "..."` | CLI | Spark host |
 | **Run agent pipeline** | `python -m orchestrator pipeline --steps "gemini:research,codex:implement"` | CLI | Spark host |
@@ -50,7 +52,7 @@ When fully deployed you get: a browser-based chat interface at `https://spark-ca
 
 | Endpoint | URL | Format | Auth |
 |----------|-----|--------|------|
-| NemoClaw UI | `https://spark-caeb.tail48bab7.ts.net/` | Web (HTML) | Token in URL hash |
+| NemoClaw UI | `https://spark-caeb.tail48bab7.ts.net/` | Web (HTML) | Tailscale Serve + device pairing |
 | Spark Ollama | `http://100.93.220.104:11434/v1/chat/completions` | OpenAI-compatible JSON | None |
 | Spark LM Studio | `http://100.93.220.104:1234/v1/chat/completions` | OpenAI + Anthropic JSON | None |
 | Mac Ollama | `http://100.116.228.36:11435/v1/chat/completions` | OpenAI-compatible JSON | None |
@@ -623,7 +625,8 @@ Exit the sandbox:
 exit
 ```
 
-Browser access: `http://127.0.0.1:18789/` (or via Tailscale at `http://100.93.220.104:18789/`).
+Browser access: `http://127.0.0.1:18789/` locally, or via Tailscale Serve at
+`https://spark-caeb.tail48bab7.ts.net/`.
 
 ---
 
@@ -721,7 +724,17 @@ If not installed:
 npm install -g openclaw
 ```
 
-**Get the gateway token from the Spark:**
+**Preferred auth path for the Mac node and browser UI:**
+
+Use Tailscale reachability plus device pairing first. The normal browser and node flow is:
+
+```bash
+make devices-list
+# approve the matching request id if one is pending
+make approve-latest-device
+```
+
+**Get the gateway token from the Spark only as fallback auth:**
 
 On the Spark, run:
 ```bash
@@ -732,7 +745,7 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERRO
     "python3 -c \"import json; gw=json.load(open('/sandbox/.openclaw/openclaw.json')).get('gateway',{}); print(gw.get('auth',{}).get('token','NOT FOUND'))\""
 ```
 
-Save the token — you'll need it for the Mac connection.
+Save the token only if you intentionally want shared-secret fallback auth. For the Control UI and same-tailnet operator devices, pairing is the cleaner default.
 
 **Install the node host service on the Mac:**
 
@@ -851,6 +864,10 @@ grep token ~/.openclaw/openclaw.json
 
 For mobile access, install the OpenClaw iOS app via TestFlight (official) or GoClaw / ClawOn from the App Store (third-party). Connect using the Tailscale URL or Spark's Tailscale IP.
 
+For subscription-authenticated coding agents, the recommended auth pattern is a
+Spark-local `pass` vault plus per-sandbox materialization. See
+[agent-auth-vault.md](agent-auth-vault.md).
+
 ---
 
 ### Phase 3: Agent Sandboxes
@@ -885,14 +902,15 @@ openshell sandbox connect codex-dev
 mkdir -p ~/.codex
 cat > ~/.codex/config.toml << 'EOF'
 model = "nemotron-3-super:120b"
-model_provider = "ollama"
+model_provider = "spark-ollama"
 
-[model_providers.ollama]
-name = "Ollama (Spark Local)"
-base_url = "http://host.openshell.internal:11434/v1"
-env_key = "OLLAMA_API_KEY"
+[model_providers.spark-ollama]
+name = "Spark Ollama via OpenShell"
+base_url = "https://inference.local/v1"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 EOF
+export OPENAI_API_KEY="ollama-local"
 ```
 
 **Gotcha (wire_api):** The `wire_api = "responses"` setting uses Codex's newer Responses API wire format. If you see errors about API format, try `wire_api = "chat"` instead.
@@ -941,7 +959,16 @@ gemini
 exit
 ```
 
-#### Step 3.4: Final Sandbox State Verification
+#### Optional Step 3.4: OpenCode Sandbox
+
+```bash
+./scripts/setup-opencode-sandbox.sh opencode-dev
+```
+
+This optional sandbox uses the Z.AI Coding Plan subscription path and defaults
+the wrapper to `zai/glm-5.1`.
+
+#### Step 3.5: Final Sandbox State Verification
 
 ```bash
 openshell sandbox list
@@ -1454,7 +1481,7 @@ curl http://inference.local/v1/models
 
 ### Codex Hardcoded localhost Issue
 
-Codex, by default, tries to reach Ollama at `localhost:11434` — which is unreachable from inside a sandbox (containers cannot reach the host's localhost). The fix is the `~/.codex/config.toml` configuration that uses `host.openshell.internal:11434` instead.
+Codex, by default, tries to reach Ollama at `localhost:11434` — which is unreachable from inside a sandbox (containers cannot reach the host's localhost). The fix is the `~/.codex/config.toml` configuration that uses a custom OpenAI-compatible provider pointed at the gateway-managed `https://inference.local/v1` endpoint instead. That keeps Codex on the same supported OpenShell interception path as the rest of the stack and avoids overriding Codex's reserved built-in `ollama` provider id.
 
 If Codex stops working after a sandbox recreation, re-create the config:
 
@@ -1462,15 +1489,19 @@ If Codex stops working after a sandbox recreation, re-create the config:
 openshell sandbox connect codex-dev
 cat > ~/.codex/config.toml << 'EOF'
 model = "nemotron-3-super:120b"
-model_provider = "ollama"
+model_provider = "spark-ollama"
 
-[model_providers.ollama]
-name = "Ollama (Spark Local)"
-base_url = "http://host.openshell.internal:11434/v1"
-env_key = "OLLAMA_API_KEY"
+[model_providers.spark-ollama]
+name = "Spark Ollama via OpenShell"
+base_url = "https://inference.local/v1"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 EOF
+export OPENAI_API_KEY="ollama-local"
 ```
+
+For repeatable rebuilds, store Codex auth in the Spark's local `pass` store and
+re-materialize it with [agent-auth-vault.md](agent-auth-vault.md).
 
 ### Mac TCP Forwarder Persistence
 
@@ -1485,6 +1516,44 @@ ssh carlos@100.116.228.36 "python3 /path/to/forwarder.py &"
 ```
 
 Permanent fix (future work): Create a launchd plist at `~/Library/LaunchAgents/com.nemoclaw.forwarder.plist`.
+
+### Optional MedGemma Provider on Mac
+
+Register MedGemma as a second Mac-backed provider instead of replacing the
+default fast route:
+
+```bash
+./scripts/register-medgemma-provider.sh medgemma-mac mac-studio.local 11435
+```
+
+Keep `mac-ollama/gemma4:27b` as the normal fast Mac route. Register
+`medgemma-mac` so it is always available, then let the host-side router proxy
+select it automatically for healthcare text when that policy is enabled. Use a
+manual `openshell inference set` only when you want to test MedGemma directly.
+
+### Start the host-side router proxy
+
+If you want automatic routing between Spark-local Nemotron and Mac-hosted
+MedGemma, run:
+
+```bash
+python -m orchestrator serve-proxy \
+  --host 127.0.0.1 \
+  --port 18080 \
+  --local-upstream-url http://127.0.0.1:11434/v1 \
+  --medgemma-upstream-url http://mac-studio.local:11435/v1
+
+openshell provider create \
+  --name nemoclaw-router \
+  --type openai \
+  --credential OPENAI_API_KEY=not-needed \
+  --config OPENAI_BASE_URL=http://127.0.0.1:18080/v1
+
+openshell inference set --provider nemoclaw-router --model nemotron-3-super:120b
+```
+
+That keeps the default route on Nemotron while allowing the router policy to
+rewrite healthcare text requests to MedGemma.
 
 ### API Key Security (Subscription Auth, Not Raw Keys)
 
@@ -1573,6 +1642,46 @@ json.dump(d, open(f, 'w'), indent=2)
 pkill -f 'openclaw gateway' ; sleep 2 ; openclaw gateway run > /tmp/gateway.log 2>&1 &
 ```
 
+This repo's `native` profile bootstrap already applies the required settings:
+
+- `gateway.controlUi.allowedOrigins` includes `https://spark-caeb.tail48bab7.ts.net`
+- `gateway.auth.allowTailscale = true`
+- `agents.defaults.timeoutSeconds = 1800`
+- `agents.defaults.heartbeat.every = "0m"` during testing
+
+If the UI instead shows `unauthorized: too many failed authentication attempts (retry later)`, the problem is usually a stale cached token in the browser rather than CORS. In that case:
+
+```bash
+make devices-list
+make approve-latest-device
+```
+
+Then reconnect from a fresh browser tab or private window without a `#token=...` URL.
+
+### WhatsApp replies time out before the agent answers
+
+If inbound WhatsApp messages arrive but the reply times out, check the runtime first:
+
+```bash
+make status
+make channels-status
+```
+
+If the OpenShell gateway or the sandboxed OpenClaw gateway is down, increasing the timeout will not help. Recover the control plane first:
+
+```bash
+make start-gateway
+make start-openclaw
+make start-forward
+```
+
+If the runtime is healthy, re-apply the managed profile so the assistant uses the longer per-turn timeout from the official OpenClaw personal-assistant guidance:
+
+```bash
+make setup-openclaw-profile
+make restart-openclaw
+```
+
 ### Device pairing for browsers and companion apps
 
 Every new client (browser, Mac node host, iOS app) that connects to the gateway creates a **device pairing request**. The gateway rejects the connection until you approve it.
@@ -1600,6 +1709,8 @@ with open(p, 'wb') as f: plistlib.dump(plist, f)
 ---
 
 ## 7. Tools Available
+
+For the main personal assistant, use the curated OpenClaw tool posture in [personal-assistant-profile.md](personal-assistant-profile.md). The short version is: start from the official `messaging` tool profile, then add web, memory, browser, nodes, cron, gateway, image, and `tts`, while keeping runtime execution and broad file mutation disabled on the WhatsApp-facing agent.
 
 ### 7.1 openshell CLI
 
@@ -1632,6 +1743,7 @@ source ~/workspace/nemoclaw/openshell-env/bin/activate
 | `logs <sandbox> --tail` | Stream live logs |
 | `term` | Open the real-time TUI for monitoring and approval |
 | `forward <port>` | Forward a local port into a sandbox |
+| `doctor exec -- kubectl ...` | Inspect or operate inside the OpenShell k3s cluster when the normal sandbox shell is not the right control path |
 
 **Examples:**
 
@@ -1653,6 +1765,9 @@ openshell logs nemoclaw-main --tail
 
 # Export a sandbox's policy for editing
 openshell policy get claude-dev --full > /tmp/policy.yaml
+
+# Inspect the OpenClaw runtime pod directly
+openshell doctor exec -- kubectl -n openshell exec nemoclaw-main -- sh
 ```
 
 ### 7.2 nemoclaw CLI
@@ -1850,7 +1965,10 @@ Keyboard shortcuts inside the TUI:
 
 Native macOS menu-bar app that connects to the NemoClaw gateway via WebSocket.
 
-**How to connect:** Launch the app, it auto-discovers via Bonjour on LAN. For Tailscale, enter `https://spark-caeb.tail48bab7.ts.net/` or `ws://100.93.220.104:18789`.
+**How to connect:** Launch the app, it auto-discovers via Bonjour on LAN. For
+remote access over Tailscale, use the Serve host over TLS
+(`wss://spark-caeb.tail48bab7.ts.net/`). Only use a raw tailnet-IP WebSocket
+URL if you intentionally expose that path for debugging.
 
 Examples:
 
@@ -1876,7 +1994,9 @@ Get macOS notifications when the agent completes long-running tasks
 
 Access NemoClaw from your iPhone. Install via TestFlight (official) or GoClaw/ClawOn (App Store).
 
-**How to connect:** Enter Tailscale URL `https://spark-caeb.tail48bab7.ts.net/` or Spark Tailscale IP `100.93.220.104:18789`.
+**How to connect:** Enter the Tailscale Serve URL
+`https://spark-caeb.tail48bab7.ts.net/`. Use the raw Spark tailnet IP only as
+an explicit debugging fallback, not as the standard mobile path.
 
 Examples:
 
@@ -2077,7 +2197,7 @@ exit
 
 # 6. Full test suite (if you want formal validation)
 cd ~/workspace/nemoclaw
-uv run pytest tests/phase1_core/ -v
+uv run --project tests python -m pytest tests/phase1_core/ -v
 ```
 
 ---
@@ -2330,8 +2450,8 @@ Always run `make status` after each step to verify nothing broke.
 | What | URL |
 |------|-----|
 | OpenClaw UI (local) | `http://127.0.0.1:18789` |
-| OpenClaw UI (Tailscale) | `http://100.93.220.104:18789` |
-| OpenClaw UI (public Serve) | `https://spark-caeb.tail48bab7.ts.net/` |
+| OpenClaw UI (Tailscale Serve) | `https://spark-caeb.tail48bab7.ts.net/` |
+| OpenClaw UI (direct tailnet IP, debugging only) | `http://100.93.220.104:18789` |
 | Ollama (Spark, direct) | `http://100.93.220.104:11434` |
 | Ollama (Mac, via forwarder) | `http://100.116.228.36:11435` |
 | Mac Node Host | `openclaw node status` | Companion service on Mac |
@@ -2372,7 +2492,7 @@ openshell gateway destroy                                 # Nuclear option
 # --- DISK / HEALTH ---
 df -h /
 du -sh ~/.ollama/models/
-uv run pytest ~/workspace/nemoclaw/tests/ -v             # Full validation
+cd ~/workspace/nemoclaw && uv run --project tests python -m pytest -v   # Full validation
 
 # Mac companion (run on Mac)
 openclaw node install --host spark-caeb.tail48bab7.ts.net --port 443 --tls --display-name "Mac Studio"

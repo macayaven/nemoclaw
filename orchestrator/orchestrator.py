@@ -1,135 +1,48 @@
-"""Main orchestrator for multi-agent task delegation.
-
-The Orchestrator is the primary entry point for all inter-agent workflows.
-It composes the SandboxBridge, TaskManager, and SharedWorkspace into a
-single cohesive API that callers interact with.
-
-Example::
-
-    from orchestrator import Orchestrator
-
-    orc = Orchestrator()
-
-    # Single-agent delegation
-    answer = orc.delegate("What is CUDA unified memory?", agent="gemini")
-
-    # Pre-built pipeline
-    result = orc.research_and_implement("Build a rate-limiter in Python")
-    print(result.final_output)
-
-    # Fan-out to multiple specialists in parallel
-    opinions = orc.parallel_specialists("Review this design", ["claude", "gemini"])
-"""
+"""Main orchestrator for multi-agent task delegation."""
 
 from __future__ import annotations
 
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from orchestrator.config import OrchestratorSettings
+from orchestrator.models import DelegationResult, PipelineResult, StepResult, TaskResult, TaskType
 from orchestrator.sandbox_bridge import SandboxBridge
 from orchestrator.shared_mcp import SharedWorkspace
-from orchestrator.task_manager import TaskManager, TaskType
-
-if TYPE_CHECKING:
-    pass
-
-
-# ---------------------------------------------------------------------------
-# Pipeline models
-# ---------------------------------------------------------------------------
+from orchestrator.storage import SQLiteStore
+from orchestrator.task_manager import TaskManager
+from orchestrator.work_queue import WorkQueue
 
 
 class PipelineStep(BaseModel):
-    """A single step in an orchestrated pipeline.
-
-    Attributes:
-        agent: Logical agent name that should handle this step.
-        task_type: Category of work performed in this step.
-        prompt_template: Jinja-like template for the prompt.  The string
-            ``{prev_result}`` is replaced with the previous step's output
-            before the prompt is dispatched.  Additional named placeholders
-            ``{step_N_result}`` (1-indexed) are also substituted.
-    """
+    """A single step in an orchestrated pipeline."""
 
     agent: str
     task_type: TaskType
     prompt_template: str
 
 
-class StepResult(BaseModel):
-    """Result produced by one pipeline step.
+class SpecialistResult(BaseModel):
+    """Structured result for parallel fan-out workflows."""
 
-    Attributes:
-        step_index: 0-based index of this step in the pipeline.
-        agent: Agent that handled this step.
-        task_type: Category of work performed.
-        output: Agent response text.
-        duration_ms: Wall-clock time for the step in milliseconds.
-        task_id: ID of the underlying Task record.
-    """
-
-    step_index: int
     agent: str
-    task_type: TaskType
-    output: str
-    duration_ms: float
-    task_id: str
-
-
-class PipelineResult(BaseModel):
-    """Aggregated result of a full pipeline execution.
-
-    Attributes:
-        steps: Ordered list of individual step results.
-        final_output: Output from the last step in the pipeline.
-        total_duration_ms: Sum of all step durations.
-    """
-
-    steps: list[StepResult] = Field(default_factory=list)
-    final_output: str = ""
-    total_duration_ms: float = 0.0
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
+    success: bool
+    delegation: DelegationResult | None = None
+    error: str | None = None
 
 
 class Orchestrator:
-    """Coordinates task delegation across OpenShell agent sandboxes.
-
-    Composes :class:`~orchestrator.sandbox_bridge.SandboxBridge`,
-    :class:`~orchestrator.task_manager.TaskManager`, and
-    :class:`~orchestrator.shared_mcp.SharedWorkspace` into a single
-    high-level API.
-
-    Attributes:
-        settings: Active orchestrator configuration.
-        bridge: Sandbox communication layer.
-        task_manager: Task persistence and lifecycle manager.
-        workspace: Shared MCP filesystem manager.
-    """
+    """Coordinates task delegation across OpenShell agent sandboxes."""
 
     def __init__(self, settings: OrchestratorSettings | None = None) -> None:
-        """Initialise the orchestrator and all sub-components.
-
-        Args:
-            settings: Optional pre-built settings object.  When omitted,
-                settings are loaded from environment variables and defaults.
-        """
         self.settings: OrchestratorSettings = settings or OrchestratorSettings()
+        self.store = SQLiteStore(self.settings.shared_workspace)
         self.bridge = SandboxBridge(self.settings)
-        self.task_manager = TaskManager(self.settings.shared_workspace)
+        self.task_manager = TaskManager(self.settings.shared_workspace, store=self.store)
+        self.work_queue = WorkQueue(self.store)
         self.workspace = SharedWorkspace(self.settings.shared_workspace)
         self.workspace.setup()
-
-    # ------------------------------------------------------------------
-    # Single-agent delegation
-    # ------------------------------------------------------------------
 
     def delegate(
         self,
@@ -138,28 +51,7 @@ class Orchestrator:
         task_type: TaskType = "analysis",
         parent_task_id: str | None = None,
         _current_depth: int = 0,
-    ) -> str:
-        """Delegate *prompt* to a single agent sandbox and return its response.
-
-        Creates a Task record, dispatches the prompt via SandboxBridge, then
-        marks the task completed or failed.
-
-        Args:
-            prompt: Natural-language instruction for the agent.
-            agent: Logical agent name (key in ``settings.agents``).
-            task_type: Broad category of work for reporting purposes.
-            parent_task_id: Optional parent task ID for subtask tracing.
-            _current_depth: Internal recursion counter for nested delegations.
-
-        Returns:
-            Agent response text.
-
-        Raises:
-            KeyError: If *agent* is not in the current settings.
-            RecursionError: If nested delegation exceeds the configured limit.
-            RuntimeError: If the sandbox command fails.
-            subprocess.TimeoutExpired: If the agent exceeds the timeout.
-        """
+    ) -> DelegationResult:
         if _current_depth > self.settings.max_delegation_depth:
             raise RecursionError(
                 "Maximum delegation depth exceeded: "
@@ -167,31 +59,42 @@ class Orchestrator:
             )
 
         agent_config = self.settings.get_agent(agent)
-
         task = self.task_manager.create_task(
             type=task_type,
             prompt=prompt,
             assigned_to=agent,
             parent_task_id=parent_task_id,
         )
-
         self.task_manager.update_task(task.id, "running")
 
         try:
-            response = self.bridge.send_prompt(
+            sandbox_result = self.bridge.send_prompt(
                 sandbox_name=agent_config.sandbox_name,
                 prompt=prompt,
                 agent_type=agent,
             )
-            self.task_manager.update_task(task.id, "completed", result=response)
-            return response
         except Exception as exc:
-            self.task_manager.update_task(task.id, "failed", result=str(exc))
+            self.task_manager.update_task(
+                task.id,
+                "failed",
+                result=TaskResult(error=str(exc)),
+            )
             raise
 
-    # ------------------------------------------------------------------
-    # Pipeline execution
-    # ------------------------------------------------------------------
+        task_result = TaskResult(
+            output_text=sandbox_result.output_text,
+            sandbox_result=sandbox_result,
+        )
+        self.task_manager.update_task(task.id, "completed", result=task_result)
+        return DelegationResult(
+            task_id=task.id,
+            agent=agent,
+            task_type=task_type,
+            prompt=prompt,
+            output_text=sandbox_result.output_text,
+            sandbox_result=sandbox_result,
+            duration_ms=sandbox_result.duration_ms,
+        )
 
     def pipeline(
         self,
@@ -199,23 +102,6 @@ class Orchestrator:
         steps: list[PipelineStep],
         parent_task_id: str | None = None,
     ) -> PipelineResult:
-        """Execute a sequential multi-step pipeline.
-
-        Each step receives the previous step's output via the
-        ``{prev_result}`` placeholder in its ``prompt_template``.
-        All historical step outputs are available as ``{step_N_result}``
-        (1-indexed) tokens.
-
-        Args:
-            prompt: Initial prompt passed to the first step as
-                ``{prev_result}`` and also available as ``{step_0_prompt}``.
-            steps: Ordered list of pipeline steps to execute.
-            parent_task_id: Optional task ID to attach all generated tasks to.
-
-        Returns:
-            PipelineResult containing every step's output and the final
-            combined output.
-        """
         result = PipelineResult()
         prev_result = prompt
         step_outputs: dict[str, str] = {"step_0_prompt": prompt}
@@ -228,57 +114,33 @@ class Orchestrator:
             try:
                 resolved_prompt = step.prompt_template.format(**substitutions)
             except KeyError:
-                # If a placeholder is missing just use the template as-is.
                 resolved_prompt = step.prompt_template
 
-            t_start = time.monotonic()
-            output = self.delegate(
+            delegation = self.delegate(
                 prompt=resolved_prompt,
                 agent=step.agent,
                 task_type=step.task_type,
                 parent_task_id=parent_task_id,
             )
-            duration_ms = (time.monotonic() - t_start) * 1000
-
-            # Look up the most recently created task for this agent to
-            # retrieve the task ID.
-            agent_tasks = self.task_manager.list_tasks(assigned_to=step.agent)
-            task_id = agent_tasks[-1].id if agent_tasks else ""
-
             step_result = StepResult(
                 step_index=idx,
                 agent=step.agent,
                 task_type=step.task_type,
-                output=output,
-                duration_ms=duration_ms,
-                task_id=task_id,
+                prompt=resolved_prompt,
+                output_text=delegation.output_text,
+                duration_ms=delegation.duration_ms,
+                task_id=delegation.task_id,
+                sandbox_result=delegation.sandbox_result,
             )
             result.steps.append(step_result)
-            result.total_duration_ms += duration_ms
-
-            key = f"step_{idx + 1}_result"
-            step_outputs[key] = output
-            prev_result = output
+            result.total_duration_ms += delegation.duration_ms
+            prev_result = delegation.output_text
+            step_outputs[f"step_{idx + 1}_result"] = delegation.output_text
 
         result.final_output = prev_result
         return result
 
-    # ------------------------------------------------------------------
-    # Pre-built pipelines
-    # ------------------------------------------------------------------
-
     def research_and_implement(self, prompt: str) -> PipelineResult:
-        """Run a research -> implement -> review pipeline.
-
-        Gemini researches the topic, Codex produces an implementation based
-        on the research findings, and Claude reviews the resulting code.
-
-        Args:
-            prompt: High-level description of what should be built.
-
-        Returns:
-            PipelineResult with all three step outputs.
-        """
         steps = [
             PipelineStep(
                 agent="gemini",
@@ -312,17 +174,6 @@ class Orchestrator:
         return self.pipeline(prompt, steps)
 
     def code_review_pipeline(self, code: str) -> PipelineResult:
-        """Run a review -> fix -> re-review pipeline on *code*.
-
-        Claude performs an initial review, Codex applies the suggested fixes,
-        and Claude re-reviews the patched version.
-
-        Args:
-            code: Source code to review and improve.
-
-        Returns:
-            PipelineResult with review, fixed code, and final review.
-        """
         steps = [
             PipelineStep(
                 agent="claude",
@@ -355,50 +206,30 @@ class Orchestrator:
         ]
         return self.pipeline(code, steps)
 
-    # ------------------------------------------------------------------
-    # Parallel fan-out
-    # ------------------------------------------------------------------
-
     def parallel_specialists(
         self,
         prompt: str,
         agents: list[str],
         task_type: TaskType = "analysis",
         max_workers: int | None = None,
-    ) -> dict[str, str]:
-        """Send *prompt* to multiple agents concurrently.
-
-        Uses a :class:`~concurrent.futures.ThreadPoolExecutor` so that all
-        sandbox calls are in-flight simultaneously.  Errors from individual
-        agents are captured as error strings in the returned dict rather
-        than propagating.
-
-        Args:
-            prompt: Prompt to send to every agent unchanged.
-            agents: List of logical agent names.
-            task_type: Task category applied to every delegation.
-            max_workers: Thread pool size.  Defaults to ``len(agents)``.
-
-        Returns:
-            Dictionary mapping agent name to its response (or an error
-            message prefixed with ``"ERROR: "``).
-        """
+    ) -> dict[str, SpecialistResult]:
         if not agents:
             return {}
 
         workers = max_workers if max_workers is not None else len(agents)
-        results: dict[str, str] = {}
+        results: dict[str, SpecialistResult] = {}
 
-        def _delegate_one(agent: str) -> tuple[str, str]:
+        def _delegate_one(agent: str) -> SpecialistResult:
             try:
-                return agent, self.delegate(prompt, agent=agent, task_type=task_type)
+                delegation = self.delegate(prompt, agent=agent, task_type=task_type)
             except Exception as exc:
-                return agent, f"ERROR: {exc}"
+                return SpecialistResult(agent=agent, success=False, error=str(exc))
+            return SpecialistResult(agent=agent, success=True, delegation=delegation)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_agent = {executor.submit(_delegate_one, a): a for a in agents}
+            future_to_agent = {executor.submit(_delegate_one, agent): agent for agent in agents}
             for future in as_completed(future_to_agent):
-                agent_name, response = future.result()
-                results[agent_name] = response
+                specialist_result = future.result()
+                results[specialist_result.agent] = specialist_result
 
         return results

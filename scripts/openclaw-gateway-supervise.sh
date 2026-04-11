@@ -9,7 +9,13 @@ touch "$LOG_PATH"
 while :; do
     printf '%s starting openclaw gateway\n' "$(date -Is)" >>"$LOG_PATH"
 
-    if openclaw gateway run "$@" >>"$LOG_PATH" 2>&1; then
+    if [ -n "${OPENCLAW_PROFILE:-}" ]; then
+        if openclaw --profile "${OPENCLAW_PROFILE}" gateway run "$@" >>"$LOG_PATH" 2>&1; then
+            rc=0
+        else
+            rc=$?
+        fi
+    elif openclaw gateway run "$@" >>"$LOG_PATH" 2>&1; then
         rc=0
     else
         rc=$?

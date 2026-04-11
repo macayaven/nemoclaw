@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from orchestrator.config import OrchestratorSettings
+from orchestrator.models import SandboxResult
 from orchestrator.orchestrator import Orchestrator, PipelineResult, PipelineStep
 
 pytestmark = pytest.mark.phase6
@@ -25,9 +26,18 @@ def _make_orchestrator(
     orchestrator = Orchestrator(settings=settings)
     calls: list[tuple[str, str, str]] = []
 
-    def fake_send_prompt(sandbox_name: str, prompt: str, agent_type: str = "openclaw") -> str:
+    def fake_send_prompt(
+        sandbox_name: str, prompt: str, agent_type: str = "openclaw"
+    ) -> SandboxResult:
         calls.append((sandbox_name, prompt, agent_type))
-        return responder(sandbox_name, prompt, agent_type)
+        return SandboxResult(
+            sandbox_name=sandbox_name,
+            command="fake",
+            stdout=f"{responder(sandbox_name, prompt, agent_type)}\n",
+            stderr="",
+            return_code=0,
+            duration_ms=12.0,
+        )
 
     monkeypatch.setattr(orchestrator.bridge, "send_prompt", fake_send_prompt)
     return orchestrator, calls
@@ -50,7 +60,7 @@ class TestDelegation:
 
         tasks = orchestrator.task_manager.list_tasks()
 
-        assert response == "ok"
+        assert response.output_text == "ok"
         assert calls == [("nemoclaw-main", "Reply with a single word: ok", "openclaw")]
         assert len(tasks) == 1
         assert tasks[0].status == "completed"
@@ -68,7 +78,8 @@ class TestDelegation:
         failed_tasks = orchestrator.task_manager.list_tasks(status="failed")
 
         assert len(failed_tasks) == 1
-        assert failed_tasks[0].result == "sandbox unreachable"
+        assert failed_tasks[0].result is not None
+        assert failed_tasks[0].result.error == "sandbox unreachable"
 
     def test_delegate_enforces_max_delegation_depth(self, tmp_path, monkeypatch) -> None:
         orchestrator, _ = _make_orchestrator(
@@ -116,6 +127,7 @@ class TestPipeline:
         assert calls[1] == ("codex-dev", "beta handled::alpha seed", "codex")
         assert result.final_output == "handled::beta handled::alpha seed"
         assert all(step.task_id for step in result.steps)
+        assert result.steps[0].output_text == "handled::alpha seed"
 
     def test_pipeline_preserves_literal_template_when_substitution_is_missing(
         self, tmp_path, monkeypatch
@@ -169,10 +181,12 @@ class TestParallelSpecialists:
             agents=["openclaw", "gemini"],
         )
 
-        assert results == {
-            "openclaw": "openclaw:ping",
-            "gemini": "gemini:ping",
-        }
+        assert results["openclaw"].success is True
+        assert results["openclaw"].delegation is not None
+        assert results["openclaw"].delegation.output_text == "openclaw:ping"
+        assert results["gemini"].success is True
+        assert results["gemini"].delegation is not None
+        assert results["gemini"].delegation.output_text == "gemini:ping"
 
     def test_parallel_specialists_returns_empty_dict_for_empty_input(
         self, tmp_path, monkeypatch

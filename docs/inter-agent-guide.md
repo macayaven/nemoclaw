@@ -420,16 +420,25 @@ package. The recommended path:
 ### Phase B: Orchestrator hardening (current repo path)
 
 1. Use the checked-in `orchestrator/` package on the Spark
-2. Extend bridge tools and task routing where needed
-3. Validate `python -m orchestrator` commands and Phase 6 tests
-4. Test: orchestrator delegates a code task across agents
+2. Persist tasks in SQLite rather than a shared JSON file
+3. Use queue-backed workers for any inbound or asynchronous work
+4. Keep bridge results structured so routing, retries, and provenance remain visible
+5. Validate `python -m orchestrator` commands and Phase 6 tests
+6. Test: orchestrator delegates a code task across agents without crossing sandbox boundaries
 
-### Phase C: Advanced Patterns
+### Phase C: Host-Side Routing and Ingress
 
-1. Add task queue MCP server (Redis-backed)
-2. Implement async task delegation
-3. Add agent status monitoring
-4. Build a dashboard showing inter-agent activity
+1. Use a host-side OpenAI-compatible router proxy instead of modifying OpenShell gateway internals
+2. Keep deterministic routing rules and model capability metadata outside sandboxes
+3. Treat models that bypass `inference.local` as orchestrator-level routes, not proxy-served routes
+4. Handle inbound webhooks with fast acknowledgement, durable queueing, and background workers
+5. Stage media on the host and pass only sanitized references into agent workflows
+
+### Phase D: Advanced Patterns
+
+1. Add richer agent status monitoring and operator dashboards
+2. Layer higher-level planning or classifier models on top of deterministic routing
+3. Add more channels after the queue/worker contract is stable
 
 ---
 

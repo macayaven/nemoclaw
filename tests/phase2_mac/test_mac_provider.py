@@ -25,7 +25,7 @@ contract : Layer-A contract / state checks (SSH to Spark, no inference).
 Fixtures (from conftest.py)
 ---------------------------
 spark_ssh : fabric.Connection — live SSH connection to the DGX Spark.
-mac_ip    : str               — LAN IP of the Mac Studio.
+test_settings: TestSettings — cluster topology and preferred hostnames/IPs.
 """
 
 from __future__ import annotations
@@ -35,8 +35,14 @@ import uuid
 import pytest
 from fabric import Connection
 
-from ..helpers import parse_json_output, run_remote
+from ..helpers import (
+    parse_openshell_inference_route_output,
+    parse_openshell_provider_output,
+    run_remote,
+    strip_ansi,
+)
 from ..models import CommandResult, OpenShellProvider
+from ..settings import TestSettings
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,10 +75,11 @@ class TestMacProviderRegistration:
         route switch commands and by NemoClaw's provider-selection logic.
 
         If the provider is absent, run on Spark:
-            openshell provider add \\
+            openshell provider create \\
                 --type openai \\
                 --name mac-ollama \\
-                --base-url http://<mac-ip>:11434
+                --credential OPENAI_API_KEY=not-needed \\
+                --config OPENAI_BASE_URL=http://<mac-ip>:11434
         """
         result: CommandResult = run_remote(spark_ssh, "openshell provider list")
 
@@ -86,55 +93,74 @@ class TestMacProviderRegistration:
             f"Provider '{_MAC_PROVIDER_NAME}' not found in openshell provider list.\n"
             f"Full output:\n{result.stdout}\n"
             "Register the Mac Ollama provider on Spark:\n"
-            f"  openshell provider add --type openai --name {_MAC_PROVIDER_NAME} "
-            f"--base-url http://<mac-ip>:{_OLLAMA_PORT}"
+            f"  openshell provider create --type openai --name {_MAC_PROVIDER_NAME} "
+            "--credential OPENAI_API_KEY=not-needed "
+            f"--config OPENAI_BASE_URL=http://<mac-ip>:{_OLLAMA_PORT}"
         )
 
-    def test_provider_points_to_mac_ip(self, spark_ssh: Connection, mac_ip: str) -> None:
-        """The mac-ollama provider's base_url must contain the Mac Studio LAN IP.
+    def test_provider_points_to_mac_endpoint(
+        self,
+        spark_ssh: Connection,
+        test_settings: TestSettings,
+    ) -> None:
+        """The mac-ollama provider is structurally valid and the Mac endpoint is reachable.
 
-        Fetches the full provider configuration as JSON, parses it into an
-        ``OpenShellProvider`` model, and asserts that ``base_url`` contains
-        the Mac's LAN IP address.  This confirms the provider is configured
-        to reach the correct host and not pointing at Spark's own Ollama
-        instance (127.0.0.1 or the Spark IP) or at a stale placeholder URL.
+        The current OpenShell CLI no longer exposes provider config values as
+        JSON, so we validate the supported contract instead:
+        1. ``openshell provider get`` returns a named openai provider with the
+           ``OPENAI_BASE_URL`` config key.
+        2. Spark can reach the Mac's Ollama API at the preferred stable endpoint
+           from test settings: Tailscale IP when configured, otherwise DNS hostname.
+
+        End-to-end proof that the route actually uses the Mac backend lives in
+        the phase-2 provider switching tests.
         """
         result: CommandResult = run_remote(
             spark_ssh,
-            f"openshell provider get {_MAC_PROVIDER_NAME} --json",
+            f"openshell provider get {_MAC_PROVIDER_NAME}",
         )
 
         assert result.return_code == 0, (
-            f"openshell provider get {_MAC_PROVIDER_NAME} --json failed "
+            f"openshell provider get {_MAC_PROVIDER_NAME} failed "
             f"(exit code {result.return_code}).\n"
             f"stderr: {result.stderr!r}\n"
             f"Is '{_MAC_PROVIDER_NAME}' registered? Run: openshell provider list"
         )
 
         assert result.stdout.strip(), (
-            f"openshell provider get {_MAC_PROVIDER_NAME} --json produced no output.\n"
+            f"openshell provider get {_MAC_PROVIDER_NAME} produced no output.\n"
             f"Return code: {result.return_code}\nStderr: {result.stderr}"
         )
 
-        provider_data = parse_json_output(result.stdout)
-        provider = OpenShellProvider.model_validate(provider_data)
+        provider: OpenShellProvider = parse_openshell_provider_output(result.stdout)
+        provider_output = strip_ansi(result.stdout)
 
-        mac_ip_str = str(mac_ip)
-
-        assert mac_ip_str in (provider.base_url or ""), (
-            f"Provider '{_MAC_PROVIDER_NAME}' base_url does not contain the Mac IP "
-            f"({mac_ip_str}).\n"
-            f"Got base_url: {provider.base_url!r}\n"
-            "The provider must point at the Mac Studio's Ollama instance.\n"
-            f"Fix: openshell provider update {_MAC_PROVIDER_NAME} "
-            f"--base-url http://{mac_ip_str}:{_OLLAMA_PORT}"
+        assert provider.name == _MAC_PROVIDER_NAME, (
+            f"Provider name mismatch: expected {_MAC_PROVIDER_NAME!r}, got {provider.name!r}.\n"
+            f"Full output:\n{provider_output}"
         )
 
-        assert str(_OLLAMA_PORT) in (provider.base_url or ""), (
-            f"Provider '{_MAC_PROVIDER_NAME}' base_url does not contain port "
-            f"{_OLLAMA_PORT}.\n"
-            f"Got base_url: {provider.base_url!r}\n"
-            f"The URL must end with :{_OLLAMA_PORT} to reach Ollama."
+        assert provider.type == "openai", (
+            f"Provider type mismatch: expected 'openai', got {provider.type!r}.\n"
+            f"Full output:\n{provider_output}"
+        )
+
+        assert "OPENAI_BASE_URL" in provider_output, (
+            f"Provider '{_MAC_PROVIDER_NAME}' does not report the OPENAI_BASE_URL config key.\n"
+            f"Full output:\n{provider_output}"
+        )
+
+        mac_host = str(test_settings.mac.tailscale_ip or test_settings.mac.hostname)
+
+        reachability: CommandResult = run_remote(
+            spark_ssh,
+            f"curl -sf --max-time 10 http://{mac_host}:{_OLLAMA_PORT}/api/tags >/dev/null",
+            timeout=15,
+        )
+        assert reachability.return_code == 0, (
+            f"Spark could not reach the Mac Ollama endpoint at http://{mac_host}:{_OLLAMA_PORT}/api/tags.\n"
+            f"stdout: {reachability.stdout!r}\n"
+            f"stderr: {reachability.stderr!r}"
         )
 
 
@@ -181,46 +207,28 @@ class TestMacProviderNegative:
         temp_provider_name = f"test-mac-dead-{unique_suffix}"
         temp_base_url = f"http://{unreachable_ip}:{_OLLAMA_PORT}"
 
-        # Register the unreachable provider — may succeed or fail depending on
-        # whether OpenShell validates connectivity at registration time.
+        # Register the unreachable provider — creation succeeds even when the
+        # target URL is dead because connectivity is validated at request time.
         run_remote(
             spark_ssh,
-            f"openshell provider add "
+            f"openshell provider create "
             f"--type openai "
             f"--name {temp_provider_name} "
-            f"--base-url {temp_base_url} "
-            f"2>&1 || true",
+            "--credential OPENAI_API_KEY=not-needed "
+            f"--config OPENAI_BASE_URL={temp_base_url}",
             timeout=15,
         )
 
-        # Attempt inference through the dead provider with a strict 30-second
-        # timeout.  We expect an error response, NOT a timeout (hang).
-        # The sandbox curl targets the unreachable provider explicitly via
-        # --provider flag, leaving the primary route untouched.
-        sandbox_name = f"test-dead-provider-{unique_suffix}"
-        curl_cmd = (
-            "curl -s --max-time 20 "
-            "--cacert /etc/openshell/ca.crt "
-            "https://inference.local/v1/chat/completions "
-            "-H 'Content-Type: application/json' "
-            "-d '{"
-            '"model":"qwen3:8b",'
-            '"messages":[{"role":"user","content":"hi"}],'
-            '"max_tokens":5'
-            "}' "
-            "2>&1 || echo CURL_FAILED"
-        )
-
-        run_cmd = (
-            f"openshell sandbox run "
-            f"--name {sandbox_name} "
-            f"--provider {temp_provider_name} "
-            f"-- {curl_cmd}"
-        )
+        route_result = run_remote(spark_ssh, "openshell inference get", timeout=15)
+        original_route = parse_openshell_inference_route_output(route_result.stdout)
 
         try:
-            result: CommandResult = run_remote(spark_ssh, run_cmd, timeout=30)
-            combined = (result.stdout + result.stderr).lower()
+            set_result = run_remote(
+                spark_ssh,
+                f"openshell inference set --provider {temp_provider_name} --model qwen3:8b",
+                timeout=60,
+            )
+            combined = (set_result.stdout + set_result.stderr).lower()
             error_keywords = {
                 "error",
                 "timeout",
@@ -229,23 +237,22 @@ class TestMacProviderNegative:
                 "failed",
                 "could not",
                 "connection",
-                "curl_failed",
+                "verify",
             }
-            got_error = any(kw in combined for kw in error_keywords) or result.return_code != 0
+            got_error = any(kw in combined for kw in error_keywords) or set_result.return_code != 0
         except TimeoutError as exc:
-            # The command itself hung -- this is also a failure mode but
-            # distinct: re-raise so pytest surfaces it as a timeout failure.
             raise AssertionError(
                 f"Provider '{temp_provider_name}' pointed at unreachable host "
-                f"{unreachable_ip} caused run_remote to hang for >30 seconds. "
-                "OpenShell must enforce a connect timeout to fail fast."
+                f"{unreachable_ip} caused 'openshell inference set' to hang for >60 seconds. "
+                "OpenShell must fail fast when verifying a dead provider."
             ) from exc
         finally:
-            # Always clean up: delete temp sandbox and provider
             run_remote(
                 spark_ssh,
-                f"openshell sandbox delete {sandbox_name} 2>/dev/null || true",
-                timeout=15,
+                "openshell inference set "
+                f"--provider {original_route.provider} --model {original_route.model} "
+                "2>/dev/null || true",
+                timeout=60,
             )
             run_remote(
                 spark_ssh,
@@ -254,10 +261,21 @@ class TestMacProviderNegative:
             )
 
         assert got_error, (
-            f"Expected an error when routing inference through unreachable provider "
-            f"'{temp_provider_name}' ({temp_base_url}), but got a success-looking "
+            f"Expected 'openshell inference set' to reject unreachable provider "
+            f"'{temp_provider_name}' ({temp_base_url}), but it appeared to succeed.\n"
+            f"Return code: {set_result.return_code}\n"
+            f"stdout: {set_result.stdout[:500]!r}\n"
+            f"stderr: {set_result.stderr[:300]!r}"
+        )
+
+        assert _OLLAMA_PORT == 11434, (
+            "Sanity check failed: test assumptions about the Mac Ollama port drifted."
+        )
+
+        assert set_result.duration_ms < 60_000, (
+            "OpenShell did reject the unreachable provider, but only after the test timeout "
+            "budget. The failure path should remain bounded.\n"
             f"response.\n"
-            f"Return code: {result.return_code}\n"
-            f"stdout: {result.stdout[:500]!r}\n"
-            f"stderr: {result.stderr[:300]!r}"
+            f"Duration: {set_result.duration_ms} ms\n"
+            f"stderr: {set_result.stderr[:300]!r}"
         )

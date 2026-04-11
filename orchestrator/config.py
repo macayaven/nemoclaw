@@ -66,6 +66,12 @@ _DEFAULT_AGENTS: dict[str, AgentConfig] = {
         inference_type="cloud",
         capabilities=["research", "analysis", "summarisation"],
     ),
+    "opencode": AgentConfig(
+        sandbox_name="opencode-dev",
+        specialization="rapid implementation with Z.ai GLM-5.1",
+        inference_type="cloud",
+        capabilities=["implementation", "code_generation", "debugging"],
+    ),
 }
 
 
@@ -93,6 +99,26 @@ class OrchestratorSettings(BaseSettings):
         default=120,
         ge=1,
         description="Default command timeout in seconds.",
+    )
+    sandbox_output_limit_bytes: int = Field(
+        default=262_144,
+        ge=1024,
+        description="Maximum bytes of stdout/stderr preview captured per stream.",
+    )
+    ssh_connect_timeout: int = Field(
+        default=10,
+        ge=1,
+        description="SSH connect timeout in seconds for sandbox transport.",
+    )
+    ssh_server_alive_interval: int = Field(
+        default=15,
+        ge=1,
+        description="SSH keepalive interval in seconds.",
+    )
+    ssh_server_alive_count_max: int = Field(
+        default=2,
+        ge=1,
+        description="Number of missed keepalives before SSH gives up.",
     )
     max_delegation_depth: int = Field(
         default=5,

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from orchestrator.models import DelegationResult, SandboxResult, TaskResult
 from orchestrator.task_manager import Task
 
 pytestmark = pytest.mark.phase6
@@ -28,7 +29,7 @@ class _FakeTaskManager:
                 prompt="Summarise the deployment state",
                 assigned_to="openclaw",
                 status="completed",
-                result="ready",
+                result=TaskResult(output_text="ready"),
             )
         ]
 
@@ -46,8 +47,23 @@ class _FakeOrchestrator:
         self.bridge = _FakeBridge()
         self.task_manager = _FakeTaskManager()
 
-    def delegate(self, prompt: str, agent: str, task_type: str = "analysis") -> str:
-        return f"{agent}:{task_type}:{prompt}"
+    def delegate(self, prompt: str, agent: str, task_type: str = "analysis") -> DelegationResult:
+        return DelegationResult(
+            task_id="task-1",
+            agent=agent,
+            task_type=task_type,
+            prompt=prompt,
+            output_text=f"{agent}:{task_type}:{prompt}",
+            sandbox_result=SandboxResult(
+                sandbox_name="sandbox",
+                command="fake",
+                stdout="ok\n",
+                stderr="",
+                return_code=0,
+                duration_ms=10.0,
+            ),
+            duration_ms=10.0,
+        )
 
     def pipeline(self, prompt: str, steps):
         step_results = [
@@ -55,15 +71,33 @@ class _FakeOrchestrator:
                 step_index=index,
                 agent=step.agent,
                 task_type=step.task_type,
-                output=f"output-{index + 1}",
+                prompt=f"prompt-{index + 1}",
+                output_text=f"output-{index + 1}",
                 duration_ms=10.0,
+                sandbox_result=SandboxResult(
+                    sandbox_name="sandbox",
+                    command="fake",
+                    stdout="ok\n",
+                    stderr="",
+                    return_code=0,
+                    duration_ms=10.0,
+                ),
                 model_dump=lambda idx=index, step=step: {
                     "step_index": idx,
                     "agent": step.agent,
                     "task_type": step.task_type,
-                    "output": f"output-{idx + 1}",
+                    "prompt": f"prompt-{idx + 1}",
+                    "output_text": f"output-{idx + 1}",
                     "duration_ms": 10.0,
                     "task_id": f"task-{idx + 1}",
+                    "sandbox_result": {
+                        "sandbox_name": "sandbox",
+                        "command": "fake",
+                        "stdout": "ok\n",
+                        "stderr": "",
+                        "return_code": 0,
+                        "duration_ms": 10.0,
+                    },
                 },
             )
             for index, step in enumerate(steps)
@@ -147,6 +181,55 @@ class TestCLIDelegate:
         assert exc_info.value.code == 0
         assert payload["agent"] == "codex"
         assert payload["response"] == "codex:implementation:Build the parser"
+
+
+class TestCLIServeProxy:
+    """Router proxy bootstrap command tests."""
+
+    def test_serve_proxy_starts_with_explicit_upstreams(self, monkeypatch, capsys) -> None:
+        from orchestrator import cli
+
+        recorded: dict[str, object] = {}
+
+        class _FakeServer:
+            base_url = "http://127.0.0.1:18080"
+
+            def shutdown(self) -> None:
+                recorded["shutdown"] = True
+
+        monkeypatch.setattr(
+            cli,
+            "start_proxy_server",
+            lambda app, host, port: (
+                recorded.update({"app": app, "host": host, "port": port}) or _FakeServer()
+            ),
+        )
+        monkeypatch.setattr(
+            cli.time, "sleep", lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt())
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(
+                [
+                    "serve-proxy",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "18080",
+                    "--local-upstream-url",
+                    "http://127.0.0.1:11434/v1",
+                    "--medgemma-upstream-url",
+                    "http://mac-studio.local:11435/v1",
+                ]
+            )
+
+        captured = capsys.readouterr()
+
+        assert exc_info.value.code == 0
+        assert recorded["host"] == "127.0.0.1"
+        assert recorded["port"] == 18080
+        assert recorded["shutdown"] is True
+        assert "Router proxy listening on http://127.0.0.1:18080" in captured.out
 
 
 class TestCLINegative:

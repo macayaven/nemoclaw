@@ -15,8 +15,8 @@ Gateway (the brain — runs inside nemoclaw-main sandbox)
   │   ├── Memory (persistent knowledge files)
   │   └── Skills (modular capabilities)
   ├── Channels (communication endpoints)
-  │   ├── Telegram, Discord, WhatsApp, IRC...
-  │   └── Web UI (Control Dashboard — your browser at :18789)
+  │   ├── WhatsApp (PRIMARY), Telegram (SECONDARY), Discord...
+  │   └── Web UI (Control Dashboard — operator channel at :18789)
   ├── Nodes (companion devices)
   │   ├── Mac Studio (screen, camera, AppleScript, voice)
   │   └── iOS (camera, location, voice)
@@ -135,16 +135,19 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Gemma 4 27B
 
 **Why they exist:** An agent with all possible capabilities enabled is both risky and noisy. You probably do not want your research assistant to be able to delete files or push commits. Skills let you define exactly what each agent can do. Keeping skills minimal is a security practice — a compromised or misbehaving agent can only use what you gave it.
 
-**How they work:** Skills have requirements — binaries that must be present, API keys that must be set, or network endpoints that must be allowed. The `openclaw skills check` command tells you which skills are ready to use and which are missing dependencies. Skills can be added via `nemoclaw <name> policy-add <skill-name>`, which adds the corresponding policy preset to the sandbox.
+**How they work:** OpenClaw separates tools, skills, and plugins. Tools are the concrete capabilities the agent can call. Skills teach the agent how and when to use those tools. Plugins can add new tools, skills, channels, or commands. Many skills have requirements — binaries on `PATH`, credentials, or approved network endpoints. The `openclaw skills check` command tells you which enabled skills are ready and which are missing dependencies.
 
-**Relationship to other concepts:** Skills belong to an agent. Enabling a skill often requires both an OpenClaw skill configuration AND an OpenShell policy preset — the former tells the agent it can use the capability, the latter tells the sandbox to allow the network access the skill needs. Plugins can add new skills to the system.
+**Relationship to other concepts:** Skills belong to an agent. In practice, a safe personal assistant starts with a narrow tool profile, then adds skills that explain good behavior on top of that. OpenShell policies remain the separate network guardrail. Plugins can add new skills to the system.
 
-**Common skills in your deployment:**
+**Common assistant capabilities in your deployment:**
 
-- GitHub integration (requires `nemoclaw nemoclaw-main policy-add github`)
-- Web browsing (uses the Browser subsystem)
-- Code execution (uses sandbox shell access)
-- File management (reads/writes within the sandbox workspace)
+- Web research (`web_search`, `web_fetch`, Browser)
+- Messaging and channel delivery
+- Memory retrieval
+- Cron-driven reminders and check-ins
+- Node-backed device actions (notifications, screenshots, AppleScript)
+
+For the default personal assistant, keep unrestricted `exec` and broad file mutation out of the baseline tool set. Reserve those for specialist sandboxes such as `codex-dev`.
 
 **Practical examples:**
 
@@ -155,21 +158,21 @@ Why this matters: you can switch between Nemotron 120B on the Spark, Gemma 4 27B
 
 ### 6. Channels
 
-**What they are:** Channels are the communication endpoints through which users can reach the agent. A channel is the mechanism by which a conversation arrives at the gateway. The browser-based Control Dashboard is one channel. Telegram is another. Discord, WhatsApp, Slack, IRC, and SMS are others.
+**What they are:** Channels are the communication endpoints through which users can reach the agent. A channel is the mechanism by which a conversation arrives at the gateway. The browser-based Control Dashboard is one channel. WhatsApp is another. Telegram, Discord, Slack, IRC, and SMS are others.
 
-**Why they exist:** You want to talk to your agent from wherever you are — sometimes from the browser on your Mac, sometimes from Telegram on your phone, sometimes from a terminal via the TUI. Channels abstract away the transport so the agent does not care where a message came from. The gateway handles the translation.
+**Why they exist:** You want to talk to your agent from wherever you are — usually from WhatsApp on your phone, sometimes from the browser on your Mac, and occasionally from a terminal via the TUI. Channels abstract away the transport so the agent does not care where a message came from. The gateway handles the translation.
 
-**How they work:** Each channel has its own configuration: a Telegram bot requires a bot token, a Discord integration requires a bot token and server permissions, a custom webhook requires an endpoint. Once configured, the gateway listens for messages on that channel and routes them to the bound agent. Each channel type has its own authentication and pairing rules.
+**How they work:** Each channel has its own configuration: WhatsApp uses the built-in Web plugin and QR-based login, Telegram requires a bot token, a Discord integration requires a bot token and server permissions, and a custom webhook requires an endpoint. Once configured, the gateway listens for messages on that channel and routes them to the bound agent. Each channel type has its own authentication and pairing rules.
 
-**The Web UI as a channel:** The browser-based Control Dashboard at `https://spark-caeb.tail48bab7.ts.net/` is the default channel. It connects to the gateway via WebSocket and provides the chat interface. It is "just a channel" — functionally equivalent to Telegram or Discord, just delivered through a browser.
+**The Web UI as a channel:** The browser-based Control Dashboard at `https://spark-caeb.tail48bab7.ts.net/` remains the operator channel. It connects to the gateway via WebSocket and provides the chat interface. It is functionally equivalent to the chat channels, but in this deployment it is not the primary daily ingress.
 
 **Relationship to other concepts:** Channels are bound to agents (`openclaw agents bind <agent> --channel <type> --target <id>`). One agent can be bound to multiple channels. Sessions are scoped by channel — your Telegram conversation and your browser conversation are separate sessions even to the same agent.
 
 **Practical examples:**
 
-- `openclaw channels add telegram --token BOT_TOKEN` registers a Telegram bot. After this, messages to that bot route through the gateway.
-- `openclaw channels list` shows every configured channel and which agent it is bound to.
-- Binding the same agent to both Telegram and the web UI means you can switch between them mid-task and the agent has separate sessions for each.
+- `openclaw --profile native channels add --channel whatsapp` enables the built-in WhatsApp channel under NemoClaw's named profile.
+- `openclaw --profile native channels login --channel whatsapp` starts the QR login flow for that account.
+- Binding the same agent to both WhatsApp and the web UI means you can switch between them mid-task while keeping sessions scoped per channel.
 
 ---
 
@@ -223,7 +226,7 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 
 **Relationship to other concepts:** Models are configured per-agent. The active model affects every session that agent has. Switching models during an active conversation changes the model for subsequent messages but does not affect the session history.
 
-**In your deployment:** The active inference route is set at the OpenShell level. Currently `local-ollama` with `nemotron-3-super:120b`. Available providers: `local-ollama` (Spark), `local-lmstudio` (Spark, OpenAI-compatible API), `local-lmstudio-anthropic` (Spark, Anthropic-compatible API), `mac-ollama` (Mac Studio).
+**In your deployment:** The active inference route is set at the OpenShell level. Currently `local-ollama` with `nemotron-3-super:120b`. The Spark also has `gemma4:31b` as a secondary strong local model. The Mac is shifting toward modality services rather than being the primary fast-text model host.
 
 **Practical examples:**
 
@@ -324,9 +327,9 @@ The second layer is **OpenClaw's model configuration** (`openclaw models`). This
 
 **Important distinction:** `openclaw devices list/approve` is for clients that want to pair (browsers, node hosts, iOS apps). `openclaw nodes list` shows nodes that are already paired and connected. These are different commands for different stages of the device lifecycle.
 
-**Relationship to other concepts:** Device pairing is part of the Security subsystem. Nodes cannot function until they are paired. The gateway token (set in the browser URL hash or the node host's environment) is a simpler alternative to device pairing for trusted clients.
+**Relationship to other concepts:** Device pairing is part of the Security subsystem. Nodes cannot function until they are paired. The gateway token is a fallback shared secret for trusted clients, but the preferred operator path in this deployment is Tailscale Serve plus one-time device approval.
 
-**In your deployment:** Your Mac node host was paired during the Mac setup phase. The browser UI uses the gateway token (in the URL hash) as an alternative to device pairing. New browsers or new instances of the iOS app will trigger the pairing flow until approved.
+**In your deployment:** Your Mac node host was paired during the Mac setup phase. The browser UI should open at `https://spark-caeb.tail48bab7.ts.net/` without a token in the URL. New browsers or new instances of the iOS app will trigger the pairing flow until approved.
 
 **Practical examples:**
 
@@ -471,16 +474,18 @@ flowchart TD
 
 ## Common "How Do I..." Questions
 
-### How do I add a Telegram bot so I can chat from my phone?
+### How do I link WhatsApp so I can chat from my phone?
 
-First, create a bot via Telegram's BotFather and get the bot token. Then inside the `nemoclaw-main` sandbox:
+From the Spark host:
 
 ```bash
-openclaw channels add telegram --token YOUR_BOT_TOKEN
-openclaw agents bind main --channel telegram --target @yourbotname
+make policy-whatsapp
+make whatsapp-setup
+make whatsapp-login
+make channels-status
 ```
 
-After this, messages to your Telegram bot route to the `main` agent. The conversation is a separate session from your browser chat.
+After the QR flow completes, messages to the linked WhatsApp account route to the `main` agent. The conversation is a separate session from your browser chat.
 
 ---
 
@@ -539,9 +544,9 @@ Once both are true, the agent can use browser tools: navigate to a URL, extract 
 
 ### How do I connect my phone?
 
-**Browser access (simple):** On any device on your Tailscale network, open `https://spark-caeb.tail48bab7.ts.net/` and authenticate with the token in the URL: `ib.tail48bab7.ts.net/#token=<your-token>`.
+**Browser access (simple):** On any device on your Tailscale network, open `https://spark-caeb.tail48bab7.ts.net/`, click **Connect**, then approve the pending device request from the Spark host.
 
-**iOS app (richer):** Install the OpenClaw iOS app via TestFlight. Connect it to `https://spark-caeb.tail48bab7.ts.net/` with your gateway token. It will create a pairing request — approve it inside the sandbox with `openclaw devices approve <id>`.
+**iOS app (richer):** Install the OpenClaw iOS app via TestFlight. Connect it to `https://spark-caeb.tail48bab7.ts.net/`. It will create a pairing request — approve it inside the sandbox with `openclaw devices approve <id>`.
 
 ---
 

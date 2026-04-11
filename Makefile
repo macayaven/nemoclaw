@@ -20,8 +20,20 @@ MAC := sshpass -p "1685" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/
 OPENCLAW_GATEWAY_LOG := /tmp/gateway.log
 OPENCLAW_SUPERVISOR_LOCAL := scripts/openclaw-gateway-supervise.sh
 OPENCLAW_SUPERVISOR_REMOTE := /tmp/openclaw-gateway-supervise.sh
+OPENCLAW_BOOTSTRAP_LOCAL := scripts/openclaw-bootstrap-profile.sh
+OPENCLAW_BOOTSTRAP_REMOTE := /tmp/openclaw-bootstrap-profile
 OPENCLAW_SUPERVISOR_LOG := /tmp/gateway-supervisor.log
 OPENCLAW_SUPERVISOR_PID := /tmp/gateway-supervisor.pid
+OPENCLAW_GATEWAY_PID := /tmp/openclaw-native.pid
+OPENCLAW_PROFILE := native
+OPENCLAW_STATE_DIR := /sandbox/.openclaw-$(OPENCLAW_PROFILE)
+OPENCLAW_FORWARD_LOG := /tmp/openclaw-port-forward.log
+OPENCLAW_FORWARD_SESSION := openclaw-ui-bridge
+OPENCLAW_HOST_PORT := 39989
+OPENCLAW_UI_PORT := 18789
+OPENCLAW_FORWARD_PORT_FILE := /tmp/openclaw-forward-port
+OPENCLAW_POD_EXEC := $(OS_ENV) && openshell doctor exec -- kubectl -n openshell exec nemoclaw-main --
+OPENCLAW_POD_EXEC_TTY := $(OS_ENV) && openshell doctor exec -- kubectl -n openshell exec -it nemoclaw-main --
 
 # --- IPs ---
 SPARK_IP := 100.93.220.104
@@ -103,17 +115,8 @@ setup: ## Full automated setup: gateway + providers + sandboxes + config + UI (z
 		openshell inference set --sandbox codex-dev --provider local-ollama --model nemotron-3-super:120b 2>&1 | tail -1; \
 		openshell inference set --sandbox gemini-dev --provider gemini-cloud --model gemini-2.5-pro 2>&1 | tail -1
 	@echo ""
-	@echo "=== Step 5/7: Writing OpenClaw config (skips interactive wizard) ==="
-	@$(OS_ENV) && $(SSH_SANDBOX) 'mkdir -p ~/.openclaw/agents/main/sessions ~/.openclaw/workspace && \
-		cat > ~/.openclaw/openclaw.json << '"'"'JSON'"'"' \
-{ \
-  "wizard": {"lastRunAt": "'"$$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'", "lastRunVersion": "2026.3.11", "lastRunCommand": "onboard", "lastRunMode": "local"}, \
-  "models": {"mode": "merge", "providers": {"nemotron-local": {"baseUrl": "https://inference.local/v1", "apiKey": "ollama", "api": "openai-completions", "models": [{"id": "nemotron-3-super:120b", "name": "nemotron-3-super:120b", "reasoning": false, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 131072, "maxTokens": 8192}]}}}, \
-  "agents": {"defaults": {"model": {"primary": "nemotron-local/nemotron-3-super:120b"}}}, \
-  "gateway": {"port": 18789, "mode": "local", "bind": "loopback", "auth": {"mode": "token"}, "controlUi": {"allowedOrigins": ["https://spark-caeb.tail48bab7.ts.net", "http://127.0.0.1:18789"]}, "trustedProxies": ["127.0.0.1", "::1"]}, \
-  "channels": {} \
-} \
-JSON' 2>&1
+	@echo "=== Step 5/7: Writing OpenClaw config (named profile, bundled channels) ==="
+	@$(MAKE) --no-print-directory setup-openclaw-profile
 	@echo ""
 	@echo "=== Step 6/7: Starting OpenClaw gateway (with auto-restart) ==="
 	@$(MAKE) --no-print-directory start-openclaw
@@ -131,8 +134,7 @@ JSON' 2>&1
 		exit 1' 2>&1
 	@echo ""
 	@echo "=== Step 7/7: Starting port forward + configuring agent sandboxes ==="
-	@$(OS_ENV) && openshell forward start 18789 nemoclaw-main --background 2>/dev/null; true
-	@sleep 2
+	@$(MAKE) --no-print-directory start-forward
 	@$(MAKE) --no-print-directory _setup-codex
 	@$(MAKE) --no-print-directory _setup-gemini
 	@echo ""
@@ -140,6 +142,12 @@ JSON' 2>&1
 	@echo "  UI:     https://spark-caeb.tail48bab7.ts.net/"
 	@echo "  Status: make status"
 	@echo "  Note:   First browser visit needs device approval: make mac-approve"
+
+.PHONY: setup-openclaw-profile
+setup-openclaw-profile: ## Write the OpenClaw named-profile config used by NemoClaw
+	@$(OS_ENV) && openshell sandbox upload nemoclaw-main $(OPENCLAW_BOOTSTRAP_LOCAL) $(OPENCLAW_BOOTSTRAP_REMOTE) >/dev/null
+	@$(OS_ENV) && openshell sandbox upload nemoclaw-main $(OPENCLAW_SUPERVISOR_LOCAL) $(OPENCLAW_SUPERVISOR_REMOTE) >/dev/null
+	@$(OPENCLAW_POD_EXEC) sh -lc 'HOME=/sandbox sh $(OPENCLAW_BOOTSTRAP_REMOTE)/openclaw-bootstrap-profile.sh $(OPENCLAW_PROFILE)'
 
 .PHONY: _setup-codex
 _setup-codex:
@@ -173,14 +181,37 @@ post-onboard: start-openclaw start-forward _setup-codex _setup-gemini ## Finish 
 	@echo ""
 	@echo "=== Done ==="
 	@echo "  UI: https://spark-caeb.tail48bab7.ts.net/"
+	@echo "  Pair browser/device requests with: make devices-list"
 	@echo "  Status: make status"
+
+.PHONY: devices-list
+devices-list: ## List pending and approved OpenClaw device-pairing requests
+	@$(OPENCLAW_POD_EXEC) sh -lc \
+		'HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) devices list'
+
+.PHONY: approve-latest-device
+approve-latest-device: ## Approve the oldest pending OpenClaw device request
+	@$(OPENCLAW_POD_EXEC) sh -lc '\
+PENDING=$$(HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) devices list 2>/dev/null | \
+	awk '\''BEGIN{pending=0} /^Pending/{pending=1; next} /^Paired/{pending=0} pending && /^│/ { line=$$0; sub(/^│[[:space:]]*/, "", line); split(line, cols, "│"); req=cols[1]; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", req); if (req != "" && req != "Request") { print req; exit } }'\''); \
+if [ -n "$$PENDING" ]; then \
+    HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) devices approve "$$PENDING"; \
+else \
+    echo "No pending devices"; \
+fi'
+
+.PHONY: gateway-token
+gateway-token: ## Print the live OpenClaw gateway token (fallback auth only)
+	@$(OPENCLAW_POD_EXEC) sh -lc \
+		'python3 -c "import json; print(json.load(open(\"$(OPENCLAW_STATE_DIR)/openclaw.json\")).get(\"gateway\",{}).get(\"auth\",{}).get(\"token\",\"\"))"'
 
 .PHONY: mac-approve
 mac-approve: ## Approve pending Mac node pairing requests
-	@$(OS_ENV) && $(SSH_SANDBOX) '\
-PENDING=$$(openclaw devices list 2>&1 | grep -oP "^│ \K[a-f0-9-]+" | head -1); \
+	@$(OPENCLAW_POD_EXEC) sh -lc '\
+	PENDING=$$(HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) devices list 2>/dev/null | \
+		awk '\''BEGIN{pending=0} /^Pending/{pending=1; next} /^Paired/{pending=0} pending && /^│/ { line=$$0; sub(/^│[[:space:]]*/, "", line); split(line, cols, "│"); req=cols[1]; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", req); if (req != "" && req != "Request") { print req; exit } }'\''); \
 if [ -n "$$PENDING" ]; then \
-    openclaw devices approve $$PENDING 2>&1 | tail -1; \
+    HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) devices approve $$PENDING 2>&1 | tail -1; \
 else \
     echo "No pending devices"; \
 fi'
@@ -190,44 +221,109 @@ fi'
 # ===========================================================================
 
 .PHONY: start
-start: start-gateway start-forward start-openclaw ## Start everything on Spark
+start: start-gateway start-openclaw start-forward ## Start everything on Spark
 	@echo "NemoClaw started. Run 'make status' to verify."
 
 .PHONY: start-gateway
 start-gateway: ## Start OpenShell gateway
-	@$(OS_ENV) && openshell gateway start 2>&1 | tail -5
+	@$(OS_ENV) && openshell gateway start
+	@for i in $$(seq 1 60); do \
+		if $(OS_ENV) >/dev/null 2>&1 && openshell status >/dev/null 2>&1; then \
+			echo "OpenShell gateway connected"; \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "OpenShell gateway failed to become ready"; \
+	$(OS_ENV) >/dev/null 2>&1 && openshell status || true; \
+	exit 1
 
 .PHONY: start-gateway-fresh
 start-gateway-fresh: ## Recreate and start gateway (clean slate)
 	@$(OS_ENV) && openshell gateway start --recreate
 
 .PHONY: start-forward
-start-forward: ## Start port forward for UI (18789)
-	@$(OS_ENV) && openshell forward start 18789 nemoclaw-main --background 2>/dev/null || \
-		echo "Forward may already be running"
+start-forward: ## Start the preferred OpenShell port forward and repoint Tailscale Serve
+	@set -eu; \
+	rm -f $(OPENCLAW_FORWARD_PORT_FILE); \
+	$(OS_ENV) >/dev/null 2>&1 && openshell forward stop 127.0.0.1:$(OPENCLAW_UI_PORT) 2>/dev/null || true; \
+	$(OS_ENV) >/dev/null 2>&1 && openshell forward stop $(OPENCLAW_UI_PORT) 2>/dev/null || true; \
+	if tmux has-session -t $(OPENCLAW_FORWARD_SESSION) 2>/dev/null; then \
+		tmux kill-session -t $(OPENCLAW_FORWARD_SESSION); \
+	fi; \
+	if $(OS_ENV) >/dev/null 2>&1 && openshell forward start 127.0.0.1:$(OPENCLAW_UI_PORT) nemoclaw-main --background >/dev/null 2>&1; then \
+		PORT=$(OPENCLAW_UI_PORT); \
+		echo "OpenClaw UI forward started via openshell forward"; \
+	else \
+		tmux new-session -d -s $(OPENCLAW_FORWARD_SESSION) \
+			'cd $(CURDIR) && source ~/workspace/nemoclaw/openshell-env/bin/activate && OPENCLAW_UI_BRIDGE_PORT=$(OPENCLAW_HOST_PORT) python3 scripts/openclaw-ui-bridge.py >> $(OPENCLAW_FORWARD_LOG) 2>&1'; \
+		PORT=$(OPENCLAW_HOST_PORT); \
+		echo "OpenClaw UI forward started via local bridge fallback"; \
+	fi; \
+	printf '%s\n' "$$PORT" > $(OPENCLAW_FORWARD_PORT_FILE); \
+	for i in $$(seq 1 20); do \
+		if curl -sf "http://127.0.0.1:$$PORT/health" >/dev/null 2>&1; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	curl -sf "http://127.0.0.1:$$PORT/health" >/dev/null 2>&1 || { \
+		echo "OpenClaw UI forward failed"; \
+		if [ "$$PORT" = "$(OPENCLAW_HOST_PORT)" ]; then \
+			tail -n 50 $(OPENCLAW_FORWARD_LOG) 2>/dev/null || true; \
+		fi; \
+		exit 1; \
+	}; \
+	tailscale serve --yes --bg "http://127.0.0.1:$$PORT" >/dev/null; \
+	echo "Tailscale Serve -> http://127.0.0.1:$$PORT"
+
+.PHONY: stop-forward
+stop-forward: ## Stop the host-side Control UI forward
+	@$(OS_ENV) >/dev/null 2>&1 && openshell forward stop 127.0.0.1:$(OPENCLAW_UI_PORT) 2>/dev/null || true
+	@$(OS_ENV) >/dev/null 2>&1 && openshell forward stop $(OPENCLAW_UI_PORT) 2>/dev/null || true
+	@if tmux has-session -t $(OPENCLAW_FORWARD_SESSION) 2>/dev/null; then \
+		tmux kill-session -t $(OPENCLAW_FORWARD_SESSION); \
+		echo "OpenClaw UI bridge fallback stopped"; \
+	else \
+		echo "OpenClaw UI bridge fallback not running"; \
+	fi
+	@rm -f $(OPENCLAW_FORWARD_PORT_FILE)
 
 .PHONY: start-openclaw
-start-openclaw: ## Start OpenClaw gateway inside sandbox (survives SSH disconnect)
+start-openclaw: ## Start OpenClaw gateway inside sandbox under a restart supervisor
 	@$(OS_ENV) && openshell sandbox upload nemoclaw-main $(OPENCLAW_SUPERVISOR_LOCAL) $(OPENCLAW_SUPERVISOR_REMOTE) >/dev/null
-	@$(OS_ENV) && $(SSH_SANDBOX) '\
-		chmod +x $(OPENCLAW_SUPERVISOR_REMOTE) && \
-		if pgrep -af "$(OPENCLAW_SUPERVISOR_REMOTE)" > /dev/null; then \
+	@$(OPENCLAW_POD_EXEC) sh -lc '\
+		if [ -f $(OPENCLAW_SUPERVISOR_PID) ] && kill -0 "$$(cat $(OPENCLAW_SUPERVISOR_PID))" 2>/dev/null; then \
 			echo "OpenClaw gateway supervisor already running"; \
-		elif pgrep -af "openclaw gateway run" > /dev/null; then \
-			echo "OpenClaw gateway already running without supervisor"; \
-			echo "Run make restart-openclaw to migrate it to supervised mode"; \
+		elif pgrep -f "[o]penclaw-gateway-supervise.sh" >/dev/null; then \
+			echo "OpenClaw gateway supervisor already running"; \
 		else \
-			nohup setsid $(OPENCLAW_SUPERVISOR_REMOTE) </dev/null > $(OPENCLAW_SUPERVISOR_LOG) 2>&1 & \
+			pkill -f "[o]penclaw --profile $(OPENCLAW_PROFILE) gateway run" 2>/dev/null || true; \
+			rm -f $(OPENCLAW_SUPERVISOR_PID) $(OPENCLAW_GATEWAY_PID) && \
+			HOME=/sandbox OPENCLAW_PROFILE=$(OPENCLAW_PROFILE) OPENCLAW_GATEWAY_LOG=$(OPENCLAW_GATEWAY_LOG) OPENCLAW_GATEWAY_RESTART_DELAY=5 \
+			nohup setsid sh -lc "exec sh $(OPENCLAW_SUPERVISOR_REMOTE)" </dev/null > $(OPENCLAW_SUPERVISOR_LOG) 2>&1 & \
 			echo $$! > $(OPENCLAW_SUPERVISOR_PID) && \
 			echo "OpenClaw gateway supervisor started"; \
 		fi'
+	@$(OPENCLAW_POD_EXEC) sh -lc '\
+		for i in $$(seq 1 60); do \
+			if curl -sf http://127.0.0.1:$(OPENCLAW_UI_PORT)/health >/dev/null 2>&1; then \
+				echo "OpenClaw gateway ready"; \
+				exit 0; \
+			fi; \
+			sleep 2; \
+		done; \
+		echo "OpenClaw gateway failed to become ready"; \
+		tail -n 100 $(OPENCLAW_SUPERVISOR_LOG) 2>/dev/null || true; \
+		tail -n 100 $(OPENCLAW_GATEWAY_LOG) 2>/dev/null || true; \
+		exit 1'
 
 .PHONY: restart-openclaw
 restart-openclaw: ## Restart OpenClaw gateway under the sandbox supervisor
-	@$(OS_ENV) && $(SSH_SANDBOX) '\
-		pkill -f "$(OPENCLAW_SUPERVISOR_REMOTE)" 2>/dev/null || true; \
-		pkill -f "openclaw gateway run" 2>/dev/null || true; \
-		rm -f $(OPENCLAW_SUPERVISOR_PID)'
+	@$(OPENCLAW_POD_EXEC) sh -lc '\
+		pkill -f "[o]penclaw-gateway-supervise.sh" 2>/dev/null || true; \
+		pkill -f "[o]penclaw --profile $(OPENCLAW_PROFILE) gateway run" 2>/dev/null || true; \
+		rm -f $(OPENCLAW_SUPERVISOR_PID) $(OPENCLAW_GATEWAY_PID)' || true
 	@$(MAKE) --no-print-directory start-openclaw
 
 .PHONY: start-lmstudio
@@ -515,27 +611,47 @@ versions: ## Show all component versions and save to versions.lock
 
 .PHONY: telegram-setup
 telegram-setup: ## Configure Telegram bot channel in OpenClaw
-	@$(OS_ENV) && $(SSH_SANDBOX) '\
-		openclaw channels add telegram && \
+	@if [ -z "$(TELEGRAM_BOT_TOKEN)" ]; then \
+		echo "Set TELEGRAM_BOT_TOKEN=... when invoking make telegram-setup"; \
+		exit 1; \
+	fi
+	@$(OPENCLAW_POD_EXEC) sh -lc \
+		'HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) channels add --channel telegram --token "$(TELEGRAM_BOT_TOKEN)" && \
 		echo "Telegram channel added. Send /start to your bot to verify."'
 
 .PHONY: whatsapp-setup
-whatsapp-setup: ## Configure WhatsApp channel in OpenClaw (requires QR scan)
-	@$(OS_ENV) && $(SSH_SANDBOX) '\
-		openclaw channels add whatsapp && \
-		echo "WhatsApp channel added. Scan the QR code with your phone."'
+whatsapp-setup: ## Enable the native WhatsApp channel in the OpenClaw named profile
+	@$(OPENCLAW_POD_EXEC) sh -lc \
+		'HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) channels add --channel whatsapp && \
+		HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) config set channels.whatsapp.groupPolicy open && \
+		HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) config set channels.whatsapp.accounts.default.groupPolicy open && \
+		echo "WhatsApp channel added. Run make whatsapp-login to scan the QR code."'
+
+.PHONY: whatsapp-login
+whatsapp-login: ## Start native WhatsApp QR login for the OpenClaw named profile
+	@$(OPENCLAW_POD_EXEC_TTY) sh -lc \
+		'HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) channels login --channel whatsapp'
 
 .PHONY: channels-status
 channels-status: ## Show status of all messaging channels
-	@$(OS_ENV) && $(SSH_SANDBOX) 'openclaw channels list 2>&1'
+	@$(OPENCLAW_POD_EXEC) sh -lc \
+		'HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) channels status --probe || HOME=/sandbox openclaw --profile $(OPENCLAW_PROFILE) channels list'
 
 .PHONY: policy-telegram
 policy-telegram: ## Add Telegram network policy to nemoclaw-main sandbox
-	@$(OS_ENV) && openshell sandbox policy-add nemoclaw-main telegram 2>&1 | tail -1
+	@TMP=$$(mktemp) && OUT=$$(mktemp) && \
+		trap 'rm -f $$TMP $$OUT' EXIT && \
+		$(OS_ENV) && openshell policy get nemoclaw-main --full | sed -n '/^---/,$$p' > $$TMP && \
+		/usr/bin/python3 scripts/merge-openshell-policy-preset.py --input $$TMP --output $$OUT --preset telegram_bot && \
+		$(OS_ENV) && openshell policy set nemoclaw-main --policy $$OUT --wait 2>&1 | tail -1
 
 .PHONY: policy-whatsapp
 policy-whatsapp: ## Add WhatsApp network policy to nemoclaw-main sandbox
-	@$(OS_ENV) && openshell sandbox policy-add nemoclaw-main whatsapp 2>&1 | tail -1
+	@TMP=$$(mktemp) && OUT=$$(mktemp) && \
+		trap 'rm -f $$TMP $$OUT' EXIT && \
+		$(OS_ENV) && openshell policy get nemoclaw-main --full | sed -n '/^---/,$$p' > $$TMP && \
+		/usr/bin/python3 scripts/merge-openshell-policy-preset.py --input $$TMP --output $$OUT --preset whatsapp_web && \
+		$(OS_ENV) && openshell policy set nemoclaw-main --policy $$OUT --wait 2>&1 | tail -1
 
 # ===========================================================================
 # End-to-End Tests
@@ -575,7 +691,7 @@ snapshot: ## Save full system state for disaster recovery
 		echo "Saving versions..." && \
 		$(MAKE) --no-print-directory versions > $$SNAP/versions.txt 2>&1 && \
 		echo "Saving OpenClaw config..." && \
-		$(SSH_SANDBOX) 'cat ~/.openclaw/openclaw.json 2>/dev/null' > $$SNAP/openclaw.json 2>&1 && \
+		$(OPENCLAW_POD_EXEC) sh -lc 'cat $(OPENCLAW_STATE_DIR)/openclaw.json 2>/dev/null' > $$SNAP/openclaw.json 2>&1 && \
 		cp tests/.env $$SNAP/tests-env.bak 2>/dev/null || true && \
 		echo "Snapshot saved to $$SNAP"
 

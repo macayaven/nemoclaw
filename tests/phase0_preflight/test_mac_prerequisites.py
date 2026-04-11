@@ -126,7 +126,14 @@ class TestMacSSH:
         # Run from the Mac: SSH to Spark and echo a sentinel value
         result: CommandResult = run_remote(
             mac_ssh,
-            f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 carlos@{spark_ip} 'echo OK'",
+            (
+                'SYNC_KEY="$HOME/Library/Application Support/NVIDIA/Sync/config/nvsync.key"; '
+                f'if [ -f "$SYNC_KEY" ]; then '
+                f"  ssh -i \"$SYNC_KEY\" -o StrictHostKeyChecking=no -o ConnectTimeout=10 carlos@{spark_ip} 'echo OK'; "
+                "else "
+                f"  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 carlos@{spark_ip} 'echo OK'; "
+                "fi"
+            ),
             timeout=30,
         )
         assert result.return_code == 0, (

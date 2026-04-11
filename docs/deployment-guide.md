@@ -11,10 +11,16 @@ After following this guide you will have:
 - **NemoClaw gateway** running on a DGX Spark, serving as the central AI inference router
 - **Mac Studio** registered as a secondary inference provider via Ollama (Gemma 4 27B)
 - **Coding agent sandboxes** for Claude Code, Codex, and Gemini CLI — all routing through the NemoClaw gateway
-- **Remote access** via Tailscale and the NemoClaw iOS app
+- **Remote access** via the Tailscale Serve URL and the NemoClaw iOS app
 - **End-to-end test coverage** validating every layer
 
-The full stack lets you run Nemotron 120B on the Spark, offload fast inference to Gemma 4 on the Mac, and access it all securely from anywhere via Tailscale.
+The default stack lets you run Nemotron 120B on the Spark, offload fast inference to Gemma 4 on the Mac, and access it securely from anywhere via the Tailscale Serve URL. The Raspberry Pi is not part of the default deployment path.
+
+For the assistant posture after deployment:
+
+- use WhatsApp as the primary ingress channel
+- keep the web UI as the operator/debugging channel
+- apply the constrained tool posture described in [personal-assistant-profile.md](personal-assistant-profile.md)
 
 ---
 
@@ -41,9 +47,11 @@ Install the following on the machine you'll run commands from (typically the Spa
 
 ### Network
 
-- **SSH access** to the DGX Spark from the Mac Studio
+- **SSH access** between the DGX Spark and Mac Studio
 - **Tailscale** installed and authenticated on both machines (`tailscale up`)
 - Both machines on the same LAN *or* reachable via Tailscale
+- **Recommended:** `pass` initialized on the Spark for coding-agent auth
+  blobs. See [agent-auth-vault.md](agent-auth-vault.md).
 
 ### Project setup
 
@@ -65,7 +73,7 @@ Before deploying anything, confirm that your environment meets all requirements.
 ### Run pre-flight tests
 
 ```bash
-uv run pytest tests/phase0_preflight/ -v
+uv run --project tests python -m pytest tests/phase0_preflight/ -v
 ```
 
 This checks:
@@ -213,7 +221,7 @@ openshell term
 ### Validate Phase 1
 
 ```bash
-uv run pytest tests/phase1_core/ -v
+uv run --project tests python -m pytest tests/phase1_core/ -v
 ```
 
 All 25 tests must pass. This verifies gateway health, provider registration, inference routing, and sandbox lifecycle.
@@ -289,14 +297,14 @@ openshell provider create \
 
 Open the browser on the Mac:
 - **LAN**: `http://spark-caeb.local:18789`
-- **Tailscale**: `http://<spark-tailscale-ip>:18789`
+- **Tailscale Serve**: `https://spark-caeb.tail48bab7.ts.net/`
 
 ### Step 2.5 — Install OpenClaw.app on Mac
 
 Install the macOS companion app. Configure it to connect to the Spark gateway:
 
 - **Connection**: WebSocket to `spark-caeb.local:18789`
-- **Tailscale mode**: Use Tailscale IP if connecting remotely
+- **Tailscale mode**: Use the Tailscale Serve URL if connecting remotely
 - Grant permissions: Notifications, Accessibility, Screen Recording, Microphone, Speech Recognition
 
 The companion app gives you:
@@ -321,10 +329,51 @@ openshell inference set --provider local-ollama --model nemotron-3-super:120b
 ### Validate Phase 2
 
 ```bash
-uv run pytest tests/phase2_mac/ -v
+uv run --project tests python -m pytest tests/phase2_mac/ -v
 ```
 
 All 17 tests must pass. This verifies Mac Ollama is serving Gemma 4, provider registration works, and switching between Spark and Mac providers succeeds.
+
+### Optional — Register MedGemma on the Mac
+
+Use MedGemma as a second Mac-backed specialist provider rather than replacing
+the main fast route:
+
+```bash
+./scripts/register-medgemma-provider.sh medgemma-mac mac-studio.local 11435
+```
+
+Keep `mac-ollama/gemma4:27b` as the normal fast Mac route. Register
+`medgemma-mac` so it is always available, then let the host-side router proxy
+select it for healthcare text when your routing policy enables that rule. Use a
+manual `openshell inference set` only for explicit one-off testing.
+
+### Optional — Start the host-side router proxy
+
+Use this when you want automatic policy-based model selection, such as routing
+healthcare text to MedGemma while leaving the default route on Nemotron:
+
+```bash
+python -m orchestrator serve-proxy \
+  --host 127.0.0.1 \
+  --port 18080 \
+  --local-upstream-url http://127.0.0.1:11434/v1 \
+  --medgemma-upstream-url http://mac-studio.local:11435/v1
+
+openshell provider create \
+  --name nemoclaw-router \
+  --type openai \
+  --credential OPENAI_API_KEY=not-needed \
+  --config OPENAI_BASE_URL=http://127.0.0.1:18080/v1
+
+openshell inference set --provider nemoclaw-router --model nemotron-3-super:120b
+```
+
+With that in place:
+
+- ordinary text requests keep using Spark-local Nemotron
+- healthcare text can be rewritten and forwarded to `medgemma-mac`
+- the global default route does not need to change for specialist traffic
 
 ---
 
@@ -363,7 +412,7 @@ openshell sandbox create \
     -- codex
 ```
 
-**Configure Codex to use local Ollama inside the sandbox:**
+**Configure Codex to use local inference inside the sandbox:**
 ```bash
 openshell sandbox connect codex-dev
 
@@ -371,19 +420,21 @@ openshell sandbox connect codex-dev
 mkdir -p ~/.codex
 cat > ~/.codex/config.toml << 'TOML'
 model = "nemotron-3-super:120b"
-model_provider = "ollama"
+model_provider = "spark-ollama"
 approval_policy = "on-request"
 sandbox_mode = "external-sandbox"
 
-[model_providers.ollama]
-name = "Ollama (Spark Local)"
-base_url = "http://host.openshell.internal:11434/v1"
-env_key = "OLLAMA_API_KEY"
+[model_providers.spark-ollama]
+name = "Spark Ollama via OpenShell"
+base_url = "https://inference.local/v1"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 
 [features]
 memories = true
 TOML
+
+export OPENAI_API_KEY="ollama-local"
 ```
 
 ### Step 3.3 — Create Gemini CLI sandbox
@@ -412,7 +463,32 @@ npm install -g @google/gemini-cli
 gemini -p "hello"
 ```
 
-### Step 3.4 — Verify all sandboxes
+### Step 3.4 — Put subscription auth into a local pass vault
+
+Once each CLI is authenticated at least once, capture the auth blobs into the
+Spark's local `pass` store and materialize them into future sandboxes:
+
+```bash
+./scripts/agent-pass-vault.sh capture claude codex gemini
+./scripts/agent-pass-vault.sh materialize claude claude-dev
+./scripts/agent-pass-vault.sh materialize codex codex-dev
+./scripts/agent-pass-vault.sh materialize gemini gemini-dev
+./scripts/configure-codex-sandbox.sh codex-dev
+```
+
+See [agent-auth-vault.md](agent-auth-vault.md) for the full workflow.
+
+### Optional — Add OpenCode sandbox
+
+```bash
+./scripts/setup-opencode-sandbox.sh opencode-dev
+```
+
+This installs OpenCode, restores `~/.local/share/opencode/auth.json` from the
+local `pass` store when present, and defaults the sandbox wrapper to
+`zai/glm-5.1`.
+
+### Step 3.5 — Verify all sandboxes
 
 ```bash
 openshell sandbox list                    # All 4 should be Ready
@@ -425,13 +501,14 @@ openshell term                            # Real-time monitoring
 |---|---|---|---|---|
 | OpenClaw | `nemoclaw-main` | `inference.local` → Ollama | nemotron-3-super:120b | **Local** |
 | Claude Code | `claude-dev` | Anthropic API | claude-sonnet-4-6 | Cloud |
-| Codex | `codex-dev` | Ollama direct (config.toml) | nemotron-3-super:120b | **Local** |
+| Codex | `codex-dev` | Custom provider → `inference.local` | nemotron-3-super:120b | **Local** |
 | Gemini CLI | `gemini-dev` | Google Gemini API | gemini-3-flash | Cloud |
+| OpenCode (optional) | `opencode-dev` | Z.AI Coding Plan | glm-5.1 | Cloud |
 
 ### Validate Phase 3
 
 ```bash
-uv run pytest tests/phase4_agents/ -v
+uv run --project tests python -m pytest tests/phase4_agents/ -v
 ```
 
 ---
@@ -439,7 +516,7 @@ uv run pytest tests/phase4_agents/ -v
 ## 7. Phase 4 — Mobile Access + Tailscale Hardening (~10 min)
 
 > **Goal:** Access NemoClaw from iPhone and harden remote access.
-> **Exit test:** iOS app connects to Spark gateway via Tailscale.
+> **Exit test:** iOS app connects to the Spark gateway via the Tailscale Serve URL.
 
 ### Step 4.1 — Configure Tailscale-native gateway access
 
@@ -453,7 +530,7 @@ openclaw gateway --tailscale serve
 ### Step 4.2 — Install iOS app
 
 - Join the OpenClaw **TestFlight** beta or install from the App Store
-- Configure: Enter Spark's Tailscale IP + port 18789
+- Configure: Enter Spark's Tailscale Serve URL
 
 ### Step 4.3 — Verify mobile access
 
@@ -463,7 +540,7 @@ openclaw gateway --tailscale serve
 ### Validate Phase 4
 
 ```bash
-uv run pytest tests/phase5_mobile/ -v
+uv run --project tests python -m pytest tests/phase5_mobile/ -v
 ```
 
 ---
@@ -511,7 +588,7 @@ python -m orchestrator parallel \
 ### Validate Phase 5
 
 ```bash
-uv run pytest tests/phase6_orchestrator/ -v
+uv run --project tests python -m pytest tests/phase6_orchestrator/ -v
 ```
 
 ---
@@ -542,7 +619,7 @@ openshell provider list
 | Service | URL | Notes |
 |---|---|---|
 | NemoClaw UI | `http://spark-caeb.local:18789` | Browser chat |
-| NemoClaw (Tailscale) | `http://<spark-tailscale>:18789` | Remote access |
+| NemoClaw (Tailscale Serve) | `https://spark-caeb.tail48bab7.ts.net/` | Remote access |
 | Spark Ollama API | `http://spark-caeb.local:11434` | Nemotron 120B |
 | Mac Ollama API | `http://mac-studio.local:11434` | Gemma 4 27B |
 

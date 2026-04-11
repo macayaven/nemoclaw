@@ -35,12 +35,16 @@ mac_ip    : str               — LAN IP of the Mac Studio.
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from fabric import Connection
 
-from ..helpers import parse_json_output, run_remote
+from ..helpers import (
+    parse_json_output,
+    parse_openshell_inference_route_output,
+    poll_until_ready,
+    run_in_sandbox,
+    run_remote,
+)
 from ..models import CommandResult, InferenceResponse, OpenShellInferenceRoute
 
 # ---------------------------------------------------------------------------
@@ -75,13 +79,12 @@ def _get_active_route(conn: Connection) -> OpenShellInferenceRoute:
     Raises:
         AssertionError: If the command fails or returns no output.
     """
-    result: CommandResult = run_remote(conn, "openshell inference get --json", timeout=15)
+    result: CommandResult = run_remote(conn, "openshell inference get", timeout=15)
     assert result.stdout.strip(), (
-        "openshell inference get --json produced no output.\n"
+        "openshell inference get produced no output.\n"
         f"Return code: {result.return_code}\nStderr: {result.stderr}"
     )
-    route_data = parse_json_output(result.stdout)
-    return OpenShellInferenceRoute.model_validate(route_data)
+    return parse_openshell_inference_route_output(result.stdout)
 
 
 def _switch_provider(conn: Connection, provider: str, model: str) -> CommandResult:
@@ -95,11 +98,21 @@ def _switch_provider(conn: Connection, provider: str, model: str) -> CommandResu
     Returns:
         The :class:`CommandResult` from the switch command.
     """
-    return run_remote(
+    result = run_remote(
         conn,
         f"openshell inference set --provider {provider} --model {model}",
-        timeout=20,
+        timeout=60,
     )
+    if result.return_code == 0:
+        poll_until_ready(
+            lambda: (
+                (route := _get_active_route(conn)).provider == provider and route.model == model
+            ),
+            timeout=30,
+            interval=2,
+            description=f"inference route to converge to {provider}/{model}",
+        )
+    return result
 
 
 def _run_inference_in_sandbox(
@@ -107,11 +120,11 @@ def _run_inference_in_sandbox(
     model: str,
     prompt: str,
     timeout: int,
-) -> tuple[CommandResult, str]:
+) -> CommandResult:
     """Send a chat completion request through the OpenShell sandbox inference route.
 
-    Creates a temporary, non-persistent sandbox, runs curl inside it targeting
-    the ``inference.local`` intercepted endpoint, then deletes the sandbox.
+    Runs curl inside the persistent ``nemoclaw-main`` sandbox via the current
+    OpenShell SSH proxy path.
 
     Args:
         conn: Fabric connection to Spark.
@@ -120,32 +133,19 @@ def _run_inference_in_sandbox(
         timeout: Seconds to wait for the remote command to complete.
 
     Returns:
-        A tuple of (CommandResult, sandbox_name) so the caller can perform
-        additional cleanup if needed.
+        The :class:`CommandResult` from the sandbox command.
     """
-    sandbox_name = f"test-switch-{uuid.uuid4().hex[:8]}"
     curl_cmd = (
-        "curl -s "
-        "--cacert /etc/openshell/ca.crt "
+        "curl -s -k "
         "https://inference.local/v1/chat/completions "
         "-H 'Content-Type: application/json' "
         f"-d '{{"
         f'"model":"{model}",'
         f'"messages":[{{"role":"user","content":"{prompt}"}}],'
-        f'"max_tokens":30'
+        f'"max_tokens":120'
         f"}}'"
     )
-    run_cmd = f"openshell sandbox run --name {sandbox_name} -- {curl_cmd}"
-    result = run_remote(conn, run_cmd, timeout=timeout)
-
-    # Best-effort cleanup — ignore errors
-    run_remote(
-        conn,
-        f"openshell sandbox delete {sandbox_name} 2>/dev/null || true",
-        timeout=15,
-    )
-
-    return result, sandbox_name
+    return run_in_sandbox(conn, "nemoclaw-main", curl_cmd, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ class TestSwitchToMac:
         which typically responds within 5-15 seconds after the model is warm.
         Cold-start (first request after idle) may take up to 25 seconds.
         """
-        result, _ = _run_inference_in_sandbox(
+        result = _run_inference_in_sandbox(
             conn=spark_ssh,
             model=_MAC_MODEL,
             prompt="Reply with the single word: ready",
@@ -221,9 +221,9 @@ class TestSwitchToMac:
             f"Full stdout: {result.stdout[:800]!r}"
         )
 
-        content = inference.choices[0].message.content
+        content = inference.choices[0].message.text
         assert content and content.strip(), (
-            "choices[0].message.content is empty or whitespace-only.\n"
+            "The first inference choice contains neither visible content nor reasoning text.\n"
             f"Full response: {result.stdout[:800]!r}"
         )
 
@@ -299,7 +299,7 @@ class TestSwitchBack:
         Nemotron 120B may require GPU warm-up time if the switch-to-Mac period
         caused the model to be evicted from VRAM.
         """
-        result, _ = _run_inference_in_sandbox(
+        result = _run_inference_in_sandbox(
             conn=spark_ssh,
             model=_SPARK_MODEL,
             prompt="Reply with the single word: ready",
@@ -321,9 +321,10 @@ class TestSwitchBack:
             f"Full stdout: {result.stdout[:800]!r}"
         )
 
-        content = inference.choices[0].message.content
+        content = inference.choices[0].message.text
         assert content and content.strip(), (
-            "choices[0].message.content is empty after switching back to Spark.\n"
+            "The first inference choice contains neither visible content nor reasoning text "
+            "after switching back to Spark.\n"
             f"Full response: {result.stdout[:800]!r}"
         )
 
